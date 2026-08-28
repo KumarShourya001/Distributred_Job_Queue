@@ -128,6 +128,31 @@ curl -X POST http://localhost:3000/jobs -H "Content-Type: application/json" -d '
 
 ## Docker
 
+### The whole stack in one command
+
+```bash
+docker compose up --build --scale worker=3
+```
+
+That starts the API plus three independent workers. Submit a burst of jobs and watch
+them spread across all three — each job runs exactly once, with no coordination between
+the workers. The atomic claim is the only thing preventing duplicate execution.
+
+Verified run: 15 jobs submitted at once across 3 workers produced 12 completed,
+3 dead-lettered after 3 attempts each, 6 retries, and zero duplicate executions.
+
+```bash
+docker compose logs -f worker    # follow all workers
+docker compose ps                # health + status
+docker compose down              # tear down
+```
+
+Config comes from your local `.env` at run time via `env_file`. Nothing is baked into
+the image — verified: there is no `.env` anywhere inside the built images, and they run
+as the non-root `node` user.
+
+### Building the images individually
+
 ```bash
 docker build -f Dockerfile.server -t jobq-server .
 docker build -f Dockerfile.worker -t jobq-worker .
@@ -136,8 +161,12 @@ docker run -p 3000:3000 -e MONGO_URI="<your-uri>" jobq-server
 docker run -e MONGO_URI="<your-uri>" jobq-worker
 ```
 
-Scaling workers is just running the worker image more than once — the atomic claim makes
-that safe with no coordination between them.
+### If Mongo won't connect from inside a container
+
+`getaddrinfo EAI_AGAIN` means DNS failed *inside* the container. Containers do not
+inherit the host's DNS settings — Docker Desktop resolves through its WSL2 VM, whose
+resolver is often stale, so Atlas lookups fail even when the host resolves them fine.
+The compose file pins `8.8.8.8` / `1.1.1.1` on both services to make this deterministic.
 
 ---
 

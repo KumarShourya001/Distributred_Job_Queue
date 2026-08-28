@@ -1,6 +1,21 @@
 FROM node:20-alpine
+
+# dumb-init forwards SIGTERM so a stopped worker exits promptly. A worker killed
+# mid-job leaves its job stranded in `claimed` until the sweeper reclaims it.
+RUN apk add --no-cache dumb-init
+
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
+
+COPY package.json package-lock.json ./
+
+RUN npm ci --omit=dev && npm cache clean --force
+
 COPY src ./src
+
+ENV NODE_ENV=production
+
+USER node
+
+# No EXPOSE and no HEALTHCHECK: the worker serves no port. It only polls Mongo.
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "src/worker/worker.js"]

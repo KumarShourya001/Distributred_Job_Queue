@@ -1,0 +1,29 @@
+# secrets — the single most important line here.
+# Config is injected at runtime with -e / env_file, never baked into an image.
+.env
+.env.*
+*credentials*
+Extra_content/
+
+# dependencies are installed inside the image by `npm ci`
+node_modules/
+dashboard/
+
+# vcs + docs + local junk
+.git/
+.gitignore
+.github/
+*.md
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# dev-only scratch file
+scratch.js
+
+# don't recurse into docker config
+Dockerfile*
+docker-compose*.yml
+.dockerignore

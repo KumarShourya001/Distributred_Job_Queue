@@ -1,18 +1,31 @@
 # ---- secrets ----
+# Never commit real config. .env.example is the committed template.
 .env
 .env.*
 !.env.example
 *credentials*
 Extra_content/
+*.pem
+*.key
 
 # ---- dependencies ----
 node_modules/
 dashboard/node_modules/
 
 # ---- build output ----
+dist/
 dashboard/dist/
 dashboard/dist-ssr/
+dashboard/.vite/
 *.local
+
+# ---- test output ----
+coverage/
+.nyc_output/
+
+# ---- docker ----
+# Local-only compose overrides (ports, mounts, extra workers) stay off the repo.
+docker-compose.override.yml
 
 # ---- logs ----
 logs/
@@ -22,7 +35,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ---- tooling caches ----
+.eslintcache
+
 # ---- editors / OS ----
+# Machine-specific Claude Code settings. Pinned here rather than relying on a
+# global ignore file, so the rule travels with the repo.
+.claude/settings.local.json
 .vscode/*
 !.vscode/extensions.json
 .idea/

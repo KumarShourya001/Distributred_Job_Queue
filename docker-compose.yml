@@ -1,0 +1,49 @@
+# Brings up the API and any number of workers in one command.
+#
+#   docker compose up --build                  # 1 server, 1 worker
+#   docker compose up --build --scale worker=3 # 1 server, 3 competing workers
+#
+# Scaling workers is the demo: three processes race for the same jobs and the
+# atomic findOneAndUpdate claim guarantees each job runs exactly once, with no
+# coordination between them.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "3000:3000"
+    # Reads your local .env at run time. Nothing is baked into the image.
+    env_file:
+      - .env
+    # Containers don't inherit the host's DNS settings. Docker Desktop resolves
+    # through its WSL2 VM, whose resolver is frequently stale or unreachable --
+    # Atlas lookups then fail with `getaddrinfo EAI_AGAIN` even on a network
+    # where the host resolves the same hostnames fine. Pinning public resolvers
+    # makes DNS deterministic regardless of the network you're on.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    # Containers don't inherit the host's DNS settings. Docker Desktop resolves
+    # through its WSL2 VM, whose resolver is frequently stale or unreachable --
+    # Atlas lookups then fail with `getaddrinfo EAI_AGAIN` even on a network
+    # where the host resolves the same hostnames fine. Pinning public resolvers
+    # makes DNS deterministic regardless of the network you're on.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+    # No container_name and no ports: both would break --scale, which needs to
+    # start N identical containers.
+    depends_on:
+      server:
+        condition: service_healthy
