@@ -1,0 +1,44 @@
+# Requirements — Distributed Job Queue
+#
+# This is a Node.js project, so the machine-readable dependency manifests are
+# package.json (backend) and dashboard/package.json (frontend). `npm install`
+# reads those. This file is the human-readable list of what you need installed
+# and configured before the project will run.
+
+## Runtime / tooling
+Node.js            >= 20.0.0     # Docker images are built on node:20-alpine
+npm                >= 10         # ships with Node 20
+Docker             (optional)    # only needed to build/run the container images
+Git                (optional)    # to clone the repo
+
+## Database
+MongoDB            >= 6.0
+                   MUST be a replica set, not a standalone mongod.
+                   The live dashboard uses MongoDB change streams, which are
+                   only available on a replica set or sharded cluster.
+                   MongoDB Atlas (free M0 tier) satisfies this out of the box.
+
+## Backend dependencies  (installed by `npm install` in the repo root)
+express            ^5.2.1        # HTTP API; v5 auto-forwards async errors
+mongoose           ^9.9.3        # MongoDB ODM, schema + atomic claim query
+zod                ^4.4.3        # request body validation
+ws                 ^8.21.3       # WebSocket server for live dashboard updates
+dotenv             ^17.4.2       # loads .env into process.env
+
+## Frontend dependencies  (installed by `npm install` in ./dashboard)
+react              ^19.2.8
+react-dom          ^19.2.8
+vite               ^8.2.2        # dev server + build
+@vitejs/plugin-react ^6.1.0
+oxlint             ^1.79.0       # linter
+
+## Environment variables  (create a .env in the repo root — see .env.example)
+MONGO_URI          required      # MongoDB connection string
+PORT               optional      # API port, defaults to 3000
+
+## Network notes
+- The `mongodb+srv://` connection form needs working DNS SRV/TXT lookups.
+  On networks that block or intercept DNS (common on campus wifi) it fails with
+  `querySrv ECONNREFUSED`. Use the non-SRV connection string listing the shard
+  hostnames explicitly. See DEBUG.md.
+- Ports used locally: 3000 (API + WebSocket), 5173 (Vite dev server).
