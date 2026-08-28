@@ -177,3 +177,245 @@ Two unrelated categories of problem get debugged very differently: application b
 
 **Expect the follow-up:** *Why does the container not need the `.env` file at all?*
 `.env` was never copied into the image — intentionally, since committing secrets into a Docker image is a real security risk (anyone with the image can extract them). Instead, `MONGO_URI` and `PORT` are injected at *runtime* via `-e` flags on `docker run`, which is exactly how a real deploy platform (Render, Azure, etc.) does it too — config lives in the platform's environment settings, never baked into the image itself.
+---
+
+## 7. `getaddrinfo EAI_AGAIN` — Mongo unreachable from inside the container
+
+**Symptom**
+`docker compose up` brought the server up, then it crash-looped. Mongoose reported "Could not connect to any servers in your MongoDB Atlas cluster... make sure your current IP is whitelisted," with `getaddrinfo EAI_AGAIN ac-gogsuqu-shard-00-00...` buried in the topology dump. The same connection string worked fine running `node src/server.js` on the host.
+
+**Assumed**
+Two wrong guesses, in order:
+1. The Atlas IP allowlist, because that's what Mongoose's error message says.
+2. The campus resolver again — the same cause as entry 1.
+
+**Actually**
+Neither. I wasn't even on the campus network at the time.
+
+Mongoose's allowlist message is a **generic hint printed for any connection failure**, not a diagnosis. The real error was `EAI_AGAIN`, a DNS resolution failure — same category as entry 1, one layer down.
+
+Containers do not inherit the host's DNS settings. The 8.8.8.8 I set on the Wi-Fi adapter back in entry 1 applies to the host only. Docker Desktop resolves through its WSL2 VM, whose resolver is frequently stale or unreachable — so Atlas lookups failed inside the container on a network where the host resolved those exact hostnames without issue.
+
+**Found by**
+Filtering the enormous topology dump for the actual error instead of reading the headline message:
+```bash
+docker logs <container> 2>&1 | grep -iE "error|EAI_AGAIN|ECONNREFUSED"
+```
+`EAI_AGAIN` names the syscall — the same tell as entry 1's `querySrv`.
+
+**Fixed by**
+Pinning public resolvers on both services in `docker-compose.yml`:
+```yaml
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+```
+Server reached `connected` / `watching job changes` / `listen on 3000` on the next `up`.
+
+**Concept**
+A container is a separate network namespace, not a process on my machine. Host-level network fixes — DNS servers, hosts file entries, VPN routes — do not cross that boundary. When something works on the host and fails in a container, network configuration is the first place to look, not the code.
+
+Also: read the *error*, not the *error message*. Mongoose's whitelist hint is printed unconditionally. `EAI_AGAIN` is the fact.
+
+**Expect the follow-up:** *Why not just use `network_mode: host`?*
+It would work on Linux and sidestep the DNS issue, but it isn't supported on Docker Desktop for Windows/Mac, and it throws away network isolation to fix a name-resolution problem. Pinning DNS is the narrower fix.
+
+---
+
+## 8. `docker compose` wouldn't start — two environment issues
+
+**Symptom**
+Two separate failures before a single container ran:
+```
+failed to read .env: line 4: key cannot contain a space
+Bind for 0.0.0.0:3000 failed: port is already allocated
+```
+
+**Assumed**
+The first meant the compose file was malformed.
+
+**Actually**
+Neither error was about compose at all.
+
+- **The `.env` parse failure**: I had pasted two full `docker run -p 3000:3000 -e MONGO_URI=...` command lines into `.env` as notes to self. `dotenv` silently skips lines that don't match `KEY=VALUE`, so Node never complained and I never knew they were there. `docker compose` parses `env_file` strictly and refuses the whole file. It had been quietly malformed for days.
+- **The port conflict**: containers from an earlier manual `docker run` were still running after 47 minutes, holding port 3000.
+
+**Found by**
+Reading both messages literally. "key cannot contain a space" describes line 4 of a *config file*, not YAML. `docker ps` showed the two orphaned containers immediately.
+
+**Fixed by**
+Deleted the two pasted command lines from `.env`, leaving only `MONGO_URI` and `PORT`. Stopped the stale containers with `docker stop <name>`.
+
+**Concept**
+Two tools reading the same file can disagree about what's valid. `dotenv` is permissive and skips garbage; `docker compose` is strict and rejects the file. A file that "works" under a lenient parser is not the same as a file that's correct — and the lenient parser is exactly what lets the problem hide.
+
+Second lesson: `docker run` containers don't disappear when I stop looking at them. Check `docker ps` before assuming a port is free.
+
+**Expect the follow-up:** *Why does `dotenv` skip malformed lines instead of erroring?*
+Deliberate design — `.env` files commonly carry comments and hand-written notes, so the parser ignores anything that isn't `KEY=VALUE` rather than breaking the app. Convenient, until a stricter consumer reads the same file.
+
+---
+
+## 9. Lost update after the atomic claim — fencing the post-claim writes
+
+**Symptom**
+None. Nothing failed, nothing logged, every test passed. Found by reasoning about the code, not by observing a failure.
+
+**Assumed**
+That entry 3 had solved the concurrency problem. `findOneAndUpdate` made the claim atomic, so the job was safe.
+
+**Actually**
+The *claim* was atomic. Everything after it was not.
+
+Once claimed, the worker held an in-memory snapshot and finished with `job.save()`. `save()` writes the whole document unconditionally — it has no idea whether the job still belongs to this worker.
+
+The gap: if a job runs longer than the sweeper's 30-second timeout, the sweeper resets it to `pending`, a second worker claims it, and the first worker's `save()` still lands — overwriting a job it no longer owns. Same class of bug as entry 3, moved from the read side to the write side.
+
+Invisible in normal running because jobs take 500ms against a 30s timeout — 60x margin.
+
+**Fixed by**
+Capturing the claim timestamp as a fence, then making every later write conditional on it:
+```javascript
+const fence = new Date()
+const job = await Job.findOneAndUpdate(
+    { status: "pending" },
+    { $set: { status: "claimed", claimedAt: fence } },
+    { sort: { createdAt: 1 }, returnDocument: "after" }
+)
+// ...
+const done = await Job.findOneAndUpdate(
+    { _id: id, claimedAt: fence },      // only if the claim is still mine
+    { $set: { status: "completed", result: { ok: true } } }
+)
+if (!done) { console.log("lost claim, discarding result", id.toString()); return }
+```
+If the sweeper nulled `claimedAt` or another worker re-claimed it, the filter matches nothing, the write does nothing, and `null` comes back. The worker discards its result — correct, because whichever worker owns the job now will finish it.
+
+**Proved by**
+Deliberately inverting the timings to force the collision: `sleep(500)` to `sleep(6000)`, sweeper `30000` to `2000`. Two workers, one job. Result: 7 claims, 7 `lost claim, discarding result`, **0 duplicate completions**. Before the fix, all 7 would have written `completed`.
+
+**Two things the forced test exposed that I wasn't looking for:**
+
+1. **The job never completed at all** — claimed, swept at 2s, re-claimed, lost at 6s, forever. A **livelock**: no crash, no error, infinite repeated work. This is why the sweeper timeout must be *longer* than the worst-case job duration. Its purpose is recovering work from dead workers; set it below job duration and it starts stealing from live ones.
+2. **All 7 claims came from `worker-1`; `worker-2` never claimed anything.** `setInterval(tick, 1000)` fires every second regardless of whether the previous tick finished, so one worker had roughly 6 overlapping ticks in flight, out-competing the other process entirely. That's the second deliberate bug from the stage-2 spec, finally visible — and the fence held correctness across all 6 concurrent ticks inside a single process.
+
+**Concept**
+Atomicity protects one operation, not a sequence. Making the claim atomic guarantees one winner *at claim time*; it says nothing about whether that winner still holds the job thirty seconds later. Any write that depends on state read earlier must re-assert that state as part of the write itself — a conditional filter, not an `if` in application memory.
+
+Naming it precisely: this is **compare-and-swap on `claimedAt`**, or optimistic concurrency control. A true fencing token is a monotonically increasing counter; the timestamp works here only because successive claims of the same job are always separated by the sweeper's timeout.
+
+**One syntax note from writing it:** a stray `\` at the end of a line produced `SyntaxError: Invalid or unexpected token` and the file wouldn't load at all. JavaScript has no line-continuation character outside strings. `node --check <file>` catches this in a second, without starting the app or connecting to Mongo.
+
+**Expect the follow-up:** *What happens to a job whose worker dies after finishing the work but before writing the result?*
+It gets swept back to `pending` and runs again — so the work happens twice. This system is **at-least-once**, not exactly-once. Making it exactly-once needs either idempotent job handlers or a transaction spanning the work and the status write, which isn't possible when the work is an external side effect like sending an email.
+
+---
+
+## 10. One worker took every job — `setInterval` and overlapping async ticks
+
+**Symptom**
+Ran two workers against a queue of slow jobs. `worker-1` claimed everything; `worker-2` logged `worker up` and then nothing at all, for the entire run. Scaling to more workers changed nothing — the extra processes sat idle while one did all the work.
+
+**Assumed**
+A problem with the atomic claim, or with how Docker was scaling the service. Possibly `worker-2` wasn't connected properly.
+
+**Actually**
+Both workers were healthy and both were polling. The problem was that `worker-1` was polling *far more often than once per second*.
+
+```javascript
+setInterval(tick, 1000)
+```
+
+`setInterval` fires on a fixed wall-clock schedule and does not wait for the previous call to finish. `tick` is `async`, so it returns a promise almost immediately — long before the job it claimed is done. With a 6-second job, six more ticks launch while the first is still working.
+
+So one process had roughly six concurrent claim attempts in flight at all times, against `worker-2`'s one. It won nearly every race by sheer volume.
+
+**Found by**
+Reading the log ordering rather than the log content. `worker-1` printed several `claimed` lines *before* any `completed` line appeared. One job at a time would have to alternate `claimed`, `completed`, `claimed`, `completed`. Stacked `claimed` lines meant overlapping work inside a single process.
+
+**Fixed by**
+Replacing the interval with a loop that waits for each tick to finish before starting the next:
+
+```javascript
+async function loop() {
+    while (!shuttingDown) {
+        await tick()
+        if (shuttingDown) break
+        await sleep(1000)
+    }
+    // cleanup
+}
+```
+
+Verified with two workers and 3-second jobs: work split across both processes, and each worker's log alternates strictly `claimed` then `completed`, never two claims in a row.
+
+The sweeper's `setInterval` was deliberately left alone — `sweep` is a single `updateMany` that finishes in milliseconds and is idempotent, so overlapping sweeps are harmless.
+
+**Concept**
+`setInterval(fn, 1000)` means "start one every second." What a poller actually wants is "wait one second between finishing and starting again." Those are only the same thing when the work is instantaneous — which is never true of anything `async`.
+
+The failure mode is worse than uneven distribution. If the database slows down, ticks pile up faster than they drain, so the system throws *more* work at the thing that is already struggling. That's a death spiral, and it's why unbounded concurrency is a bug even when nothing visibly breaks.
+
+**Expect the follow-up:** *Why not use a counting semaphore to allow N jobs per worker?*
+A sequential loop is a semaphore with exactly one permit, so it's the same idea with the simplest possible bound. A larger bound is worth it when jobs are I/O-bound — waiting on an email API or an HTTP call leaves the process idle, so one worker could usefully hold several. It isn't worth it here because the "work" is a `sleep` placeholder, and because scaling horizontally (`--scale worker=3`) already provides parallelism that the atomic claim makes safe with zero coordination.
+
+---
+
+## 11. Worker killed mid-job on every deploy — graceful shutdown
+
+**Symptom**
+Not an error — a cost. Every `docker compose down` or redeploy killed workers instantly, abandoning whatever job was in flight. Those jobs sat in `claimed` until the sweeper reclaimed them 30 seconds later, so each deploy stalled every in-flight job by half a minute.
+
+**Assumed**
+That the fence and the sweeper already covered this. They do prevent *corruption* — but preventing corruption and shutting down well are different problems.
+
+**Actually**
+Docker sends `SIGTERM` and waits (10 seconds by default) before `SIGKILL`. Node installs no handler for `SIGTERM` by default, so the process died immediately, mid-job, every time — never using the grace period it was being offered.
+
+**Fixed by**
+A shutdown flag the loop checks, set by a signal handler that does nothing else:
+
+```javascript
+let shuttingDown = false
+
+function requestShutdown(signal) {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(signal, "received - finishing current job, then exiting")
+}
+
+process.on("SIGTERM", () => requestShutdown("SIGTERM"))
+process.on("SIGINT", () => requestShutdown("SIGINT"))
+```
+
+and cleanup placed *after* the loop, not inside the handler:
+
+```javascript
+clearInterval(sweepTimer)
+await mongoose.disconnect()
+process.exit(0)
+```
+
+**Proved by**
+Slowed jobs to 8 seconds, submitted one, and sent `SIGTERM` 3 seconds in with a 30-second grace period:
+
+```
+05:04:18  claimed 6a921afa...
+05:04:21  SIGTERM received - finishing current job, then exiting
+05:04:26  completed 6a921afa...
+05:04:26  worker stopped cleanly
+```
+
+The job finished instead of being abandoned, and Mongo confirmed `status: "completed"`. Before the change, the process would have died at 05:04:21.
+
+**Concept — a signal handler sets a flag and returns.**
+It must not close connections, await anything, or run teardown. The signal can arrive at any instant, including mid-write. Disconnecting Mongo inside the handler would kill the connection underneath the in-flight job's own `findOneAndUpdate` — a "graceful" shutdown that corrupts precisely the work it was written to protect.
+
+The thing that *notices* an event and the thing that *acts* on it are separate. The handler requests a shutdown; the loop performs one, at a moment of its own choosing when nothing is in flight.
+
+Two smaller points that mattered:
+- `clearInterval(sweepTimer)` requires having stored the timer handle. The old code discarded `setInterval`'s return value, so the sweeper couldn't be stopped — and a sweep firing after `disconnect()` would throw on a dead connection.
+- `process.exit(0)` — zero means success. A non-zero code tells Docker the container crashed, and `restart: unless-stopped` would immediately bring it back.
+
+**Expect the follow-up:** *What if the job takes longer than Docker's grace period?*
+`SIGKILL` arrives and the process dies regardless — nothing in Node can prevent that. The fence and sweeper are what make it safe: the job stays `claimed`, gets reclaimed after 30 seconds, and another worker redoes it. At-least-once still holds. The knob for genuinely long jobs is `stop_grace_period` per service in `docker-compose.yml`.
