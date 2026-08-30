@@ -23,8 +23,13 @@ app.use(express.json())
 
 const cors = (req, res, next) => {
     res.header('Access-Control-Allow-Origin', config.corsOrigin);
-    res.header("Vary","Origin") 
-    next(); 
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    res.header("Vary","Origin");
+    if(req.method==="OPTIONS"){
+      return res.sendStatus(204)
+    }
+    next();
 };
 app.use(cors)
 app.use("/jobs",jobRoutes)

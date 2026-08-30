@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000"
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000"
+const JOB_TYPES = ["http_request"]
 
 function statusColor(status) {
   switch (status) {
@@ -15,53 +16,93 @@ function statusColor(status) {
 }
 
 export default function App() {
+  const [type, setType] = useState("http_request")
+  const [payloadText, setPayloadText] = useState(`{
+  "url": "https://webhook.site/e2cbff67-93cd-4d0a-8eaa-c85c0b01ab7b",
+  "body": { "hello": "from my job queue" }
+}`)
+  const [submitError, setSubmitError] = useState(null)
+  
   const [jobs, setJobs] = useState({})
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-
-  // 1. Load what already exists, once, on mount.
-  useEffect(() => {
-    let cancelled = false
-
-    async function load() {
+   async function load() {
       try {
         const res = await fetch(`${API_URL}/jobs?limit=100`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const list = await res.json()
-        if (cancelled) return
+       
 
         const fetched = Object.fromEntries(list.map((j) => [j._id, j]))
-        // prev spread LAST: anything the socket delivered while we were
-        // fetching is newer than what the fetch returned.
-        setJobs((prev) => ({ ...fetched, ...prev }))
+        setJobs((prev) => ({ ...prev, ...fetched }))
         setLoadError(null)
       } catch (err) {
-        if (!cancelled) setLoadError(err.message)
+        setLoadError(err.message)
       } finally {
-        if (!cancelled) setLoading(false)
+         setLoading(false)
+      }
+    }
+    async function handleSubmit(e) {
+      e.preventDefault()
+      let payload
+      try{
+        payload=JSON.parse(payloadText)
+      }catch(err){
+       
+        setSubmitError(err.message || "An unexpected error occured")
+        return 
+      }
+      const res= await fetch(`${API_URL}/jobs`,{
+         method:"POST",
+        headers: { "Content-Type" : "application/json" },
+        body:JSON.stringify({type,payload})
+      }
+      )
+      if(!res.ok){
+        const err=await res.json()
+        setSubmitError (err.error || err.message || "FAILED")
+        return
+      }
+      setSubmitError(null)
+
+    }  
+  // 1. Load what already exists, once, on mount.
+ useEffect(() => {
+    load()
+  }, [])
+   // 2. Stay current from here on, reconnecting if the socket drops.
+  useEffect(() => {
+    let cancelled = false
+    let socket = null
+    let timer = null
+
+    function connect() {
+      socket = new WebSocket(WS_URL)
+
+      socket.onopen = () => {setConnected(true);load()}
+
+      socket.onclose = () => {
+        setConnected(false)
+        if (!cancelled) timer = setTimeout(connect, 2000)
+      }
+
+      socket.onerror = (err) => console.error("ws error", err)
+
+      socket.onmessage = (msg) => {
+        const data = JSON.parse(msg.data)
+        if (!data.job) return
+        setJobs((prev) => ({ ...prev, [data.job._id]: data.job }))
       }
     }
 
-    load()
-    return () => { cancelled = true }
-  }, [])
+    connect()
 
-  // 2. Stay current from here on.
-  useEffect(() => {
-    const ws = new WebSocket(WS_URL)
-
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onerror = (err) => console.error("ws error", err)
-
-    ws.onmessage = (msg) => {
-      const data = JSON.parse(msg.data)
-      if (!data.job) return
-      setJobs((prev) => ({ ...prev, [data.job._id]: data.job }))
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      if (socket) socket.close()
     }
-
-    return () => ws.close()
   }, [])
 
   const jobList = Object.values(jobs).sort(
@@ -83,7 +124,34 @@ export default function App() {
           Could not load existing jobs: {loadError}. Live updates still work.
         </p>
       )}
+      <form onSubmit={handleSubmit}  style={{ display: "flex", flexDirection: "column", gap: 8, margin: "16px 0", maxWidth: 520 }} >
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          style={{ fontFamily: "monospace", padding: 6, background: "#1a1a1a", color: "#eee", border: "1px solid #444" }}
+        >
+          {JOB_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
 
+        <textarea
+          value={payloadText}
+          onChange={(e) => setPayloadText(e.target.value)}
+          rows={6}
+          spellCheck={false}
+          style={{ fontFamily: "monospace", padding: 8, background: "#1a1a1a", color: "#eee", border: "1px solid #444", resize: "vertical" }}
+        />
+
+        <button
+          type="submit"
+          style={{ fontFamily: "monospace", padding: "8px 16px", background: "#2e6b58", color: "#eee", border: "none", cursor: "pointer", alignSelf: "flex-start" }}
+        >
+          Submit job
+        </button>
+
+        {submitError && <p style={{ color: "#c0392b", margin: 0 }}>{submitError}</p>}
+      </form>
       <div style={{ display: "flex", gap: 24, margin: "16px 0" }}>
         <Stat label="pending" value={pendingCount} />
         <Stat label="claimed" value={claimedCount} />
