@@ -419,3 +419,58 @@ Two smaller points that mattered:
 
 **Expect the follow-up:** *What if the job takes longer than Docker's grace period?*
 `SIGKILL` arrives and the process dies regardless — nothing in Node can prevent that. The fence and sweeper are what make it safe: the job stays `claimed`, gets reclaimed after 30 seconds, and another worker redoes it. At-least-once still holds. The knob for genuinely long jobs is `stop_grace_period` per service in `docker-compose.yml`.
+
+---
+
+## 12. `/health` returned 500 — and `node --check` had passed the file
+
+**Symptom**
+Every other route worked. `GET /health` returned 500 with the generic error-handler message.
+
+**Assumed**
+The file was fine — `node --check src/server.js` reported no problem.
+
+**Actually**
+The array was declared as `status` and read as `states`. `ReferenceError: states is not defined`, thrown the moment the route ran.
+
+**Concept**
+`node --check` parses grammar, not meaning. It cannot know whether an identifier exists, because JavaScript resolves names at runtime. A file can pass the syntax check and still throw on its first line of real work.
+
+Same class as the undefined `attempts` variable earlier: the error only appears when that exact line executes, which is why a route nobody has called yet can stay broken indefinitely.
+
+**Expect the follow-up:** *What would have caught it?*
+ESLint's `no-undef` rule, or TypeScript. Both check identifiers before the code runs; `node --check` never does.
+
+---
+
+## 13. `type` was decorative — every job did the same thing
+
+**Symptom**
+None. Everything passed. `type: "send_email"` and `type: "banana"` behaved identically.
+
+**Actually**
+The worker never read `job.type`. It slept 500ms and marked the job complete regardless. The field was validated, stored, displayed — and ignored. The queue wasn't running jobs, it was simulating them.
+
+**Fixed by**
+A handler registry — `src/worker/handlers.js`, an object mapping type to an async function. The worker looks up `handlers[job.type]`, throws if there isn't one, and stores whatever the handler returns as `result`.
+
+First real handler: `http_request`, which POSTs a payload to a URL using Node's built-in `fetch`, with `AbortSignal.timeout(10000)`.
+
+**One bug while wiring it:** wrote `result: {result}` in the update. Object shorthand `{result}` already means `{result: result}`, so the extra braces nested it one level deep — the stored value became `{result: {status: 200}}` instead of `{status: 200}`.
+
+**Proved by**
+A local listener, one worker, three jobs:
+
+```
+completed  result: {"status":200,"url":"http://localhost:4600/hook"}
+dead       result: {"error":"request failed: HTTP 500"}      attempts: 3
+dead       result: {"error":"no handler for type: send_email"} attempts: 3
+```
+
+The listener logged the real POST body, and logged the 500 route being hit **three times** — the retry logic driving three genuine HTTP requests before dead-lettering.
+
+**Concept**
+The queue is generic infrastructure; handlers are the pluggable part. Once dispatch is keyed on `type`, unknown types fail through the retry path with no new code, and the timeout has to sit below the sweeper's lease — 10s against 30s — or a slow request outlives its own claim.
+
+**Expect the follow-up:** *Why reject unknown types at the API instead of letting them dead-letter?*
+Dead-lettering works, but it costs three attempts spread over minutes before anyone finds out, and the failure surfaces far from the mistake. The registry's keys are a known set, so the API can reject a typo at submission with a 400 — same argument as the `status` enum in entry 2.

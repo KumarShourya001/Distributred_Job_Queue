@@ -7,11 +7,23 @@ const { initWebSocket } = require("./ws")
 const { watchJobChanges } = require("./changeStream")
 const http=require('http')
 const app=express()
+
+app.get("/health",(req,res)=>{
+  const states=["disconnected", "connected", "connecting", "disconnecting"]
+  const mongo=states[mongoose.connection.readyState]|| "unknown"
+  const ok=mongoose.connection.readyState=== 1
+  res.status(ok?200:503).json({
+    status: ok?"ok":"degraded",
+    mongo,
+    uptime:Math.floor(process.uptime())
+  })
+})
+
 app.use(express.json())
 
 const cors = (req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:5173'); 
-    
+    res.header('Access-Control-Allow-Origin', config.corsOrigin);
+    res.header("Vary","Origin") 
     next(); 
 };
 app.use(cors)

@@ -1,11 +1,16 @@
 const express=require("express")
 const router=express.Router()
+const {handlers}=require("../worker/handlers")
 const { z } = require("zod")
 const { createJob, listJobs, getJob } = require("../services/jobService")
+
+
+const jobTypes = Object.keys(handlers) ;
 const schema=z.object({
-    type: z.string().min(1),
+    type: z.enum(jobTypes),
    payload: z.record(z.any()).default({})
 })
+
 
 const listQuerySchema = z.object({
   status: z.enum(["pending", "claimed", "completed", "failed", "dead"]).optional(),

@@ -2,6 +2,7 @@ const config=require("../config")
 const mongoose=require("mongoose")
 const Job = require("../models/Job")
 const { sweep } = require("./sweeper")
+const {handlers}=require("./handlers")
 
 let shuttingDown=false
 let sweepTimer=null
@@ -12,6 +13,7 @@ const MAX_ATTEMPTS=3
 function sleep(ms){
     return new Promise(r=>setTimeout(r,ms))
 }
+
 async function tick() {
     try{
         const fence = new Date()
@@ -24,13 +26,17 @@ async function tick() {
         const id=job._id
         console.log("claimed",job._id.toString())
         try{
-            await sleep(500)
+            const handler=handlers[job.type]
+            if(!handler){
+                throw new Error(`no handler for type: ${job.type}`)
+            }
             if (job.payload && job.payload.shouldFail) {
                 throw new Error("simulated failure")
-    }
+            }
+    const result=await handler(job.payload)
     const done=await Job.findOneAndUpdate(
         {_id:id,claimedAt:fence},
-        {$set:{status:"completed",result:{ok:true}}}
+        {$set:{status:"completed",result}}
     )
     if(!done){
         console.log("lost claim,discarding result",id.toString())
@@ -64,13 +70,13 @@ catch(err){
 function requestShutdown(signal){
     if(shuttingDown)return
     shuttingDown=true
-    console.log(signal,"recieved-finishing current job,then exiting")
+    console.log(signal,"received - finishing current job, then exiting")
 }
 
 process.on('SIGTERM',()=>requestShutdown("SIGTERM"))
 process.on('SIGINT',()=>requestShutdown("SIGINT"))
 
-async function loop(params) {
+async function loop() {
     while(!shuttingDown){
         await tick()
         if(shuttingDown)break

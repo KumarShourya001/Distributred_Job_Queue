@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
-const WS_URL = "ws://localhost:3000"
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000"
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000"
 
 function statusColor(status) {
   switch (status) {
@@ -14,9 +15,39 @@ function statusColor(status) {
 }
 
 export default function App() {
-  const [jobs, setJobs] = useState({})     // id -> job
+  const [jobs, setJobs] = useState({})
   const [connected, setConnected] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
 
+  // 1. Load what already exists, once, on mount.
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const res = await fetch(`${API_URL}/jobs?limit=100`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const list = await res.json()
+        if (cancelled) return
+
+        const fetched = Object.fromEntries(list.map((j) => [j._id, j]))
+        // prev spread LAST: anything the socket delivered while we were
+        // fetching is newer than what the fetch returned.
+        setJobs((prev) => ({ ...fetched, ...prev }))
+        setLoadError(null)
+      } catch (err) {
+        if (!cancelled) setLoadError(err.message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  // 2. Stay current from here on.
   useEffect(() => {
     const ws = new WebSocket(WS_URL)
 
@@ -47,6 +78,12 @@ export default function App() {
       <h1>Job Queue Dashboard</h1>
       <p>WebSocket: {connected ? "connected" : "disconnected"}</p>
 
+      {loadError && (
+        <p style={{ color: "#c0392b" }}>
+          Could not load existing jobs: {loadError}. Live updates still work.
+        </p>
+      )}
+
       <div style={{ display: "flex", gap: 24, margin: "16px 0" }}>
         <Stat label="pending" value={pendingCount} />
         <Stat label="claimed" value={claimedCount} />
@@ -74,6 +111,11 @@ export default function App() {
           ))}
         </tbody>
       </table>
+
+      {loading && <p style={{ color: "#888", marginTop: 16 }}>Loading…</p>}
+      {!loading && !loadError && jobList.length === 0 && (
+        <p style={{ color: "#888", marginTop: 16 }}>No jobs yet. Submit one to see it appear.</p>
+      )}
     </div>
   )
 }
