@@ -3,6 +3,7 @@ const mongoose=require("mongoose")
 const Job = require("../models/Job")
 const { sweep } = require("./sweeper")
 const {handlers}=require("./handlers")
+const { PermanentError } = require("./errors")
 
 let shuttingDown=false
 let sweepTimer=null
@@ -28,7 +29,7 @@ async function tick() {
         try{
             const handler=handlers[job.type]
             if(!handler){
-                throw new Error(`no handler for type: ${job.type}`)
+                throw new PermanentError(`no handler for type: ${job.type}`)
             }
             if (job.payload && job.payload.shouldFail) {
                 throw new Error("simulated failure")
@@ -36,7 +37,7 @@ async function tick() {
     const result=await handler(job.payload)
     const done=await Job.findOneAndUpdate(
         {_id:id,claimedAt:fence},
-        {$set:{status:"completed",result}}
+        {$set:{status:"completed",result,finishedAt:new Date()}}
     )
     if(!done){
         console.log("lost claim,discarding result",id.toString())
@@ -47,8 +48,15 @@ async function tick() {
 }
 catch(joberr){
     const attempts=job.attempts+1
-    const update=attempts<MAX_ATTEMPTS?{status:"pending",claimedAt:null,attempts,result:{error:joberr.message}}:
-    {status:"dead",attempts,result:{error:joberr.message}}
+    let update
+    if (joberr instanceof PermanentError) {
+        update = { status: "failed", attempts, result: { error: joberr.message }, finishedAt: new Date() }
+    } else if (attempts < MAX_ATTEMPTS) {
+        update = { status: "pending", claimedAt: null, attempts, result: { error: joberr.message } }
+    } else {
+        update = { status: "dead", attempts, result: { error: joberr.message }, finishedAt: new Date() }
+    }
+
     const updated=await Job.findOneAndUpdate(
         {_id:id,claimedAt:fence},
         {$set:update}
@@ -57,9 +65,7 @@ catch(joberr){
         console.log("lost claim,discarding failure",id.toString())
         return
     }
-    console.log(
-        attempts<MAX_ATTEMPTS?`failing,retrying ${id} attempt ${attempts}`:`failed,dead lettered ${id}`
-    ) 
+    console.log(`${update.status} ${id} attempt ${attempts}`)
 }
 }
 catch(err){
@@ -95,4 +101,7 @@ async function main() {
     loop()
 }
 
-main()
+main().catch((err) => {
+  console.error("worker failed to start:", err.message)
+  process.exit(1)
+})

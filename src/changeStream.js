@@ -15,5 +15,6 @@ function watchJobChanges(){
 
     })
     console.log("watching job changes")
+    return stream
 }
 module.exports={watchJobChanges}

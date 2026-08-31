@@ -2,8 +2,7 @@ const express=require("express")
 const router=express.Router()
 const {handlers}=require("../worker/handlers")
 const { z } = require("zod")
-const { createJob, listJobs, getJob } = require("../services/jobService")
-
+const { createJob, listJobs, getJob, jobStats } = require("../services/jobService")
 
 const jobTypes = Object.keys(handlers) ;
 const schema=z.object({
@@ -16,7 +15,9 @@ const listQuerySchema = z.object({
   status: z.enum(["pending", "claimed", "completed", "failed", "dead"]).optional(),
   limit: z.coerce.number().int().positive().max(100).default(50)
 })
-
+router.get("/stats", async (req, res) => {
+    res.json(await jobStats())
+})
 router.get("/",async(req,res)=>{
    
     const result=listQuerySchema.safeParse(req.query)

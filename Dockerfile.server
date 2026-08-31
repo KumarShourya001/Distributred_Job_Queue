@@ -24,10 +24,12 @@ USER node
 
 EXPOSE 3000
 
-# There is no GET /health route yet, so this is a TCP liveness check:
-# it proves the port is accepting connections, not that Mongo is reachable.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "require('net').connect(3000,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})"
+# Hits GET /health, which returns 503 when Mongo is disconnected. A TCP probe
+# would stay green in that case: the port accepts connections whether or not the
+# database is reachable, so it would report a service that can serve nothing as
+# healthy. Exit 0 only on a 2xx response.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "src/server.js"]

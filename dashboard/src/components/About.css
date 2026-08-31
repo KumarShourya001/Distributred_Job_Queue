@@ -1,0 +1,43 @@
+.about {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 800px) {
+  .about { grid-template-columns: 1fr; gap: 12px; }
+}
+
+.about > div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+
+.about h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin-bottom: 6px;
+}
+
+.about p {
+  color: var(--text-mid);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.about em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.about .dead-word {
+  color: var(--dead);
+  font-weight: 600;
+}

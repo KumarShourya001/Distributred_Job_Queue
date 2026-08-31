@@ -3,11 +3,13 @@ const config=require("./config")
 const mongoose = require('mongoose')
 const express=require('express')
 const jobRoutes =require('./api/jobRoutes')
-const { initWebSocket } = require("./ws")
+const { initWebSocket, closeWebSocket } = require("./ws")
 const { watchJobChanges } = require("./changeStream")
 const http=require('http')
 const app=express()
-
+let server=null
+let stream=null
+let shuttingDown=false
 app.get("/health",(req,res)=>{
   const states=["disconnected", "connected", "connecting", "disconnecting"]
   const mongo=states[mongoose.connection.readyState]|| "unknown"
@@ -46,10 +48,41 @@ async function main() {
   await mongoose.connect(config.mongoUri)
   console.log("connected")
   
-  const server = http.createServer(app) 
+  server = http.createServer(app) 
+  server.on("error",(err)=>{
+    console.error("server error:",err.message)
+    process.exit(1)
+  })
   initWebSocket(server)
-  watchJobChanges()
+  stream=watchJobChanges()
   server.listen(config.port,()=>console.log(`listen on ${config.port}`))
 
 }
-main()
+async function shutdown(signal) {
+  if(shuttingDown)return
+  shuttingDown=true
+  console.log(signal,"received - shutting down")
+  const force=setTimeout(()=>{
+    console.error("forced exit")
+    process.exit(1)
+
+  },10000)
+  force.unref()
+  const closed=new Promise((resolve)=>server.close(resolve))
+  closeWebSocket()
+  await closed
+  if(stream)await stream.close()
+  await mongoose.disconnect()
+clearTimeout(force)
+console.log("server stopped cleanly")
+process.exit(0)
+
+}
+process.on("SIGTERM",()=>shutdown("SIGTERM"))
+process.on("SIGINT",()=>shutdown("SIGINT"))
+
+
+main().catch((err) => {
+  console.error("failed to start:", err.message)
+  process.exit(1)
+})

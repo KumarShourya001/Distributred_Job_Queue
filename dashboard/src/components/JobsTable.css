@@ -1,0 +1,127 @@
+/* The table is the one element allowed to scroll sideways — the page never does. */
+.table-wrap {
+  overflow-x: auto;
+  max-height: 620px;
+  overflow-y: auto;
+}
+
+/* Fixed layout: columns come from the widths below, not from content. With
+   auto layout the Result column claimed its max-width even for short values
+   and pushed the table past its container. */
+.table-wrap table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table-wrap col.c-id       { width: 84px; }
+.table-wrap col.c-type     { width: 136px; }
+.table-wrap col.c-status   { width: 124px; }
+.table-wrap col.c-attempts { width: 88px; }
+.table-wrap col.c-result   { width: auto; }   /* takes whatever is left */
+.table-wrap col.c-age      { width: 62px; }
+
+.table-wrap thead th {
+  text-align: left;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-mid);
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table-wrap tbody td {
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-mid);
+  vertical-align: middle;
+}
+
+.table-wrap tbody tr:last-child td { border-bottom: 0; }
+
+@media (hover: hover) and (pointer: fine) {
+  .table-wrap tbody tr:hover td { background: var(--accent-bg); }
+}
+
+td.id {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
+td.type {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+td.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+th.num { text-align: right; }
+
+td.age {
+  color: var(--text-mute);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+td.result {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+td.result.err { color: var(--dead); }
+td.result .none { color: var(--text-mute); font-family: var(--sans); }
+
+/* ---- status indicator -------------------------------------------------
+   AWS shows status as a coloured marker plus a word, never colour alone. */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  color: var(--pill-fg, var(--pending));
+}
+
+.pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+/* ---- empty / loading -------------------------------------------------- */
+
+.empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-mute);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.empty strong {
+  display: block;
+  color: var(--text);
+  font-weight: 700;
+  margin-bottom: 4px;
+  font-size: 15px;
+}

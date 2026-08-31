@@ -1,0 +1,84 @@
+/* Full-bleed dark band, the way the AWS console carries its global nav. */
+.masthead {
+  background: var(--header-bg);
+  color: var(--text-invert);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.masthead-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 20px 24px 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .masthead-inner { padding: 18px 16px 20px; }
+}
+
+.masthead h1 {
+  font-size: clamp(1.25rem, 2.6vw, 1.55rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text-invert);
+}
+
+.masthead .tagline {
+  color: #b4b4bb;
+  font-size: 13.5px;
+  margin-top: 5px;
+  max-width: 66ch;
+}
+
+/* ---- connection pill ------------------------------------------------- */
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px 4px 9px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #d1d5db;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: color 200ms var(--ease-out), border-color 200ms var(--ease-out);
+}
+
+.conn .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.conn[data-state="live"] {
+  color: #6ee7a0;
+  border-color: rgba(110, 231, 160, 0.4);
+}
+
+/* The only ambient motion on the page, and it earns it: a static dot can't
+   tell "connected" apart from "frozen tab". */
+.conn[data-state="live"] .dot {
+  animation: conn-pulse 2.4s ease-in-out infinite;
+}
+
+.conn[data-state="down"] {
+  color: #ff8a80;
+  border-color: rgba(255, 138, 128, 0.4);
+}
+
+@keyframes conn-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}

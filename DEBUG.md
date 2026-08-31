@@ -474,3 +474,374 @@ The queue is generic infrastructure; handlers are the pluggable part. Once dispa
 
 **Expect the follow-up:** *Why reject unknown types at the API instead of letting them dead-letter?*
 Dead-lettering works, but it costs three attempts spread over minutes before anyone finds out, and the failure surfaces far from the mistake. The registry's keys are a known set, so the API can reject a typo at submission with a 400 — same argument as the `status` enum in entry 2.
+
+---
+
+## 14. The `http_request` handler was an open SSRF proxy
+
+**Symptom**
+None. Every test passed, every job completed, the dashboard looked correct. Nothing was
+broken — which is exactly what made it dangerous.
+
+**Actually**
+`handlers.js` fetched whatever URL arrived in the payload, and `POST /jobs` is
+unauthenticated. So this body was accepted, queued, and executed by the worker:
+
+```json
+{ "type": "http_request", "payload": { "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/" } }
+```
+
+`169.254.169.254` is the cloud metadata endpoint on AWS, GCP and Azure. A worker running
+there fetches it happily, the response is stored in `job.result`, and `job.result` is then
+served back over `GET /jobs/:id` **and broadcast to every connected dashboard over the
+change stream**. A public submission endpoint reading internal credentials and publishing
+them. The same trick reaches `127.0.0.1:3000`, the Mongo port, or anything else inside the
+deploy network.
+
+Server-Side Request Forgery: the attacker never talks to the internal service. They make
+*my* server talk to it, from inside the trust boundary, and hand back the answer.
+
+Local dev hid it completely — there is no metadata service on a laptop, so the exploit
+only comes alive at the moment of deploy.
+
+**Fixed by**
+`src/worker/safeUrl.js` — `assertSafeUrl()`, called before `fetch`. Five layers:
+
+1. Parse with `new URL()` in a try/catch.
+2. Protocol allowlist — `http:` / `https:` only, which kills `file:`, `ftp:`, `data:`.
+3. Resolve the hostname with `dns.lookup(host, { all: true })`.
+4. Reject loopback, RFC1918 private, link-local, CGNAT, multicast and reserved ranges —
+   plus the IPv6 equivalents.
+5. `redirect: "manual"` on the fetch.
+
+Optional `ALLOWED_HOSTS` env var turns the denylist into an allowlist, which is strictly
+stronger.
+
+**Concept — check the resolved address, not the hostname**
+The obvious implementation is a string check on the hostname, and it is worthless. I can
+register `totally-normal-site.com` and point its A record at `169.254.169.254`. The string
+looks fine; the packet goes to the metadata service. Only the *resolved address* tells the
+truth.
+
+Three subtleties that each individually defeat a naive version:
+
+- **`{ all: true }` returns an array, and every entry must be checked.** Validating only
+  `addresses[0]` is a bypass: a hostile resolver returns one safe public address followed
+  by an internal one, and the request goes to whichever the OS picks.
+- **`::ffff:169.254.169.254` is the metadata address wearing an IPv6 costume.**
+  `net.isIP()` reports `6`, so none of the IPv4 rules fire. IPv4-mapped addresses have two
+  spellings — dotted, and hex (`::ffff:a9fe:a9fe`, since `a9fe` = 169.254). Both have to be
+  unwrapped and re-checked as IPv4.
+- **Redirects undo all of it.** `fetch` follows them by default. A public host passes every
+  check, then returns `302 Location: http://169.254.169.254/`. Validation already happened;
+  the redirect is followed unvalidated. `redirect: "manual"` is not optional — without it
+  the other four layers are decorative.
+
+**Known residual risk — DNS rebinding**
+I resolve the hostname, get a safe address, and then `fetch` resolves it *again* and can
+get a different answer. That is a TOCTOU race. Closing it properly means connecting to the
+already-validated IP with a custom agent instead of handing `fetch` a hostname. Not fixed;
+documented deliberately.
+
+**First implementation pass failed — six identifier bugs, `node --check` passed all of them**
+
+Same lesson as entry 12, at larger scale. Both files parsed clean and nothing worked:
+
+| Location | Bug | Effect |
+|---|---|---|
+| `safeUrl.js` | `net.BLOCKED_V4.some(...)` | `BLOCKED_V4` is module-level, not on `net`. `TypeError: Cannot read properties of undefined` — **all IPv4 blocking dead** |
+| `safeUrl.js` | `typeof rawurl` (lowercase `u`) | `typeof` on an *undeclared* identifier returns `"undefined"` instead of throwing, so the guard silently matched every input — every URL rejected as "non-empty string" |
+| `safeUrl.js` | `new URL(rawurl)` | `ReferenceError`, swallowed by the bare `catch` and reported as "url is not valid" — a typo disguised as a validation failure |
+| `safeUrl.js` | `protocol !== "https:" && protocol !== "https:"` | `"https:"` written twice; `http://` URLs rejected. Fail-closed, so not a hole, but it breaks legitimate jobs |
+| `safeUrl.js` | `parseINt` | `ReferenceError` on the hex IPv4-mapped path only — the branch a real attacker uses |
+| `handlers.js` | `res.status` read **above** `const res = await fetch(...)` | Temporal dead zone. `ReferenceError: Cannot access 'res' before initialization` — every `http_request` job dies |
+
+Plus: `assertSafeUrl(url)` called *before* the `if (!url)` guard, so a missing URL produced
+the wrong error message; `res.staus` and `res.handlers.get`; and `redirect: "manual"` never
+added to the fetch options at all — the single line the whole defence depends on.
+
+**Concept**
+`node --check` parses grammar, not meaning — it cannot know whether an identifier exists.
+Two of these are worse than a plain crash, because they *fail quietly in the safe direction*:
+the `typeof rawurl` bug rejected everything, and the doubled `"https:"` rejected plain HTTP.
+A security check that refuses all input looks like it is working. Only a test that asserts
+a **known-good URL is allowed** distinguishes "correctly blocking attacks" from "broken and
+blocking everything".
+
+**Proved by**
+A 37-case run against `assertSafeUrl` and `isBlockedAddress` after the fixes: every private,
+loopback, link-local and IPv4-mapped address rejected; every public address allowed; both
+`example.com` spellings and `webhook.site` still pass, which is the case that proves the
+check is discriminating rather than simply refusing everything.
+
+Two things the run exposed that reading the code did not:
+
+- `http://[::ffff:169.254.169.254]/` comes out of `new URL()` normalised to the **hex**
+  form, `::ffff:a9fe:a9fe`. So the hex branch is the one that actually executes on a real
+  attack string, and the dotted branch is the rarer path. The `parseINt` typo sat in the
+  live branch, not a corner case.
+- `localhost` resolved to `::1` first on this machine, not `127.0.0.1`. The IPv6 rules are
+  not defensive extras — on a dual-stack host they are the ones that fire.
+
+**Expect the follow-up:** *Why not validate the URL at the API instead of in the worker?*
+The API should too, for a fast 400 instead of three doomed retries. But the handler is where
+the dangerous action happens, so that is where the check has to be load-bearing — an API
+check is a convenience, not a boundary. Anything that can insert a document into the
+collection (a migration, a script, a second API instance on an old build) bypasses the route
+entirely and reaches the worker regardless.
+
+**Expect the follow-up:** *Why is a validation failure retried three times?*
+It shouldn't be. A blocked URL is a permanent failure — retrying it twice more changes
+nothing and just delays the dead-letter. That needs the `failed` vs `dead` distinction the
+schema already declares but no code sets. Open.
+
+---
+
+## 15. Two versions of the worker eating from one queue
+
+**Symptom**
+Testing the new `failed`-vs-`dead` logic. Permanent failures were supposed to stop at
+attempt 1. Two of five test jobs came back `failed` with **`attempts: 2`**, the other one
+with `attempts: 1`. Same code path, different answers.
+
+**Assumed**
+An off-by-one in `const attempts = job.attempts + 1`.
+
+**Actually**
+Two worker processes were running. `Get-CimInstance Win32_Process` on `node.exe` showed
+one started at 15:21 and one at 16:54 — the first from hours earlier, running the code as
+it stood *before* `PermanentError` existed.
+
+The sequence that produced `attempts: 2`:
+
+1. Old worker claims the job. It has no concept of a permanent error, so it does the old
+   thing: `attempts: 1`, `status: "pending"` — queued for retry.
+2. New worker claims the retry, recognises `PermanentError`, and writes
+   `attempts: 2, status: "failed"`.
+
+The number was correct. The premise — one worker — was wrong.
+
+**Found by**
+Listing process command lines rather than trusting task-manager-style output. `tasklist`
+shows seven `node.exe` entries with no way to tell a worker from Adobe's updater;
+`Get-CimInstance Win32_Process | Select CommandLine` shows exactly which script each one is
+running and when it started. The start time is what gave it away.
+
+**Fixed by**
+Killing both, starting one, re-running. Clean result: all three permanent failures at
+`attempts: 1`.
+
+**Concept — this is a rolling deploy, and the queue survived it**
+Two versions of a consumer against one queue is not a testing artifact; it is what every
+deploy looks like for a few seconds. Worth noting what did *not* happen: no duplicate
+execution, no corruption, no lost job. The atomic claim held across versions, because it
+depends on a `findOneAndUpdate` on `status`, not on any assumption that all workers agree
+about behaviour.
+
+What *did* happen is that the old worker did work the new one would have skipped. The
+system stayed correct and got slower. That is the right failure mode for a mixed-version
+window, and it is the honest answer to "what happens to in-flight jobs during a deploy?"
+
+**Expect the follow-up:** *How would you make a mixed-version window safer?*
+Version the handler contract rather than the worker. If a job records the schema version it
+was written under, an old worker can decline to claim work it does not understand instead of
+guessing. Not implemented — the queue is small enough that "slower, still correct" is
+acceptable.
+
+---
+
+## 16. Startup failures printed 137 lines — and two of them needed different handlers
+
+**Symptom**
+Wrong `MONGO_URI`: 25 lines from the server, 137 from the worker, mostly a
+`TopologyDescription` dump listing every host, wire version and round-trip time. Every
+restart of a crash-loop reprinted the whole thing.
+
+**Actually**
+`main()` was called bare. An unhandled promise rejection prints the full error object.
+Node does exit non-zero, so Docker's `restart: unless-stopped` was already doing the right
+thing — this was never a crash bug, only a diagnostics one. I ranked it higher than it
+deserved before measuring it.
+
+**Fixed by**
+
+```js
+main().catch((err) => {
+  console.error("failed to start:", err.message)
+  process.exit(1)
+})
+```
+
+`err.message`, not `err` — that one word is the entire difference between 2 lines and 137.
+`process.exit(1)` is not optional: a caught rejection with no explicit exit leaves the code
+at **0**, which Docker reads as "finished successfully" and does not restart. Catching
+without exiting turns a noisy crash-loop into silent death, which is strictly worse.
+
+**Then the port-in-use case still printed 26 lines.**
+`main().catch()` never saw it. `server.listen()` does not reject a promise on `EADDRINUSE` —
+it emits an `'error'` **event**, and an unhandled `'error'` event on an EventEmitter throws
+outside the promise chain entirely.
+
+Two failure channels, two handlers:
+
+| Failure | Channel | Caught by |
+|---|---|---|
+| Mongo unreachable | rejected promise | `main().catch()` |
+| Port already in use | `'error'` event | `server.on("error", ...)` |
+
+**And a one-letter typo that was worse than a crash.**
+The first attempt wrote `process.emit(1)` instead of `process.exit(1)`. `process.emit` is a
+real function — it emitted an event named `1`, nothing listened, it returned `false`, no
+error. The handler logged its message and then simply carried on.
+
+That mattered because of `ws`: `new WebSocketServer({ server })` attaches a listener that
+re-emits the HTTP server's `'error'` on the WebSocketServer, which has no `'error'` handler
+of its own. So one `EADDRINUSE` reached two emitters — the first logged politely, the second
+threw. Output was the tidy message *followed by* the 26-line stack, which reads like the fix
+half-worked. `process.exit(1)` terminates synchronously, so the second listener never runs.
+
+Note what that leaves: it only works because `server.on("error")` is registered *before*
+`initWebSocket(server)`. Reorder those two lines and the crash comes back. The robust version
+would give `ws.js` its own `wss.on("error")`.
+
+**Proved by**
+
+| Case | Before | After |
+|---|---|---|
+| server, Mongo unreachable | 25 lines | 2 lines, exit 1 |
+| server, port in use | 26 lines | 4 lines, exit 1 |
+| worker, Mongo unreachable | 137 lines | 1 line, exit 1 |
+
+**Concept**
+"Handled" is not one thing. Promises and EventEmitters are separate error channels, and a
+`try`/`catch`/`.catch()` covers only the first. Any object you call `.on()` on is a second
+channel you have to opt into.
+
+---
+
+## 17. Graceful shutdown hung for exactly 10 seconds
+
+**Symptom**
+Added shutdown to the API. With no dashboard open it exited instantly. With a dashboard
+connected it printed `SIGTERM received - shutting down`, sat there, and 10 seconds later
+printed `forced exit` and quit with code 1 — the backstop timer, every single time.
+
+**Actually**
+`server.close()` stops accepting *new* connections and fires its callback only once every
+*existing* connection has ended. WebSockets never end on their own; staying open is the
+entire point of them.
+
+So:
+
+```js
+await new Promise(r => server.close(r))   // waits for the sockets
+closeWebSocket()                          // never reached
+```
+
+The HTTP server waits for the sockets. The sockets wait for someone to hang them up. The
+only thing that broke the tie was the 10-second timer.
+
+**Fixed by** starting the close, hanging up the sockets, and only then waiting:
+
+```js
+const closed = new Promise((resolve) => server.close(resolve))
+closeWebSocket()
+await closed
+```
+
+**Proved by** the same code run twice against a live WebSocket:
+
+| | with `closeWebSocket()` | without |
+|---|---|---|
+| time to exit | **132 ms** | 10,005 ms |
+| exit code | **0** | 1 |
+| WS close code seen by client | **1001** (going away) | 1006 (abnormal) |
+
+1006 is what a client sees when the socket dies with the process. 1001 is a deliberate
+hang-up, which the dashboard's reconnect logic can treat as "come back shortly" instead of
+"the server crashed".
+
+**Concept — outermost first, and the connection last**
+
+1. stop accepting new work (`server.close`)
+2. end the work that cannot end itself (`closeWebSocket`)
+3. drain what is in flight (`await closed`)
+4. close the consumers (`stream.close`)
+5. **disconnect Mongo last** — the change stream is a live cursor on that connection.
+   Disconnecting earlier tears it out from under in-flight work, which is entry 11's lesson
+   in a different costume.
+
+Two smaller things that both bit:
+
+- `force.unref()` — without the parentheses it is a property read that does nothing, and the
+  10-second backstop then keeps the process alive for the full 10 seconds *after* a clean
+  shutdown has already finished.
+- `process.on("SIGINT", shutdown("SIGINT"))` **calls** `shutdown` at module load and passes
+  its returned Promise to `process.on`. The server shut itself down before it ever listened,
+  then died on `The "listener" argument must be of type function`. It needs
+  `() => shutdown("SIGINT")`. The SIGTERM line one row above was written correctly, which
+  made the two easy to compare and hard to see.
+
+**Expect the follow-up:** *Why a 10-second timer at all if the ordering is right?*
+Because "the ordering is right" is an assumption about code not yet written. A socket that
+refuses to close or a Mongo that stops answering turns every `await` above into a hang, and a
+graceful shutdown that never finishes is just a hang with better intentions. The timer exits
+**1**, not 0, so the exit code still reports that it was not clean.
+
+**Windows note:** `process.kill(pid, "SIGTERM")` does not deliver a catchable signal on
+Windows — it terminates the process outright, so the handler never runs and the test looks
+like a failure. Ctrl-C in a console does deliver SIGINT, and Docker sends a real SIGTERM on
+Linux. To exercise the handler programmatically here, `process.emit("SIGTERM")` invokes the
+listeners directly.
+
+---
+
+## 18. `/jobs/stats` — all zeros, then a route that "did not exist"
+
+**Symptom (1)**
+The aggregation returned correct rows, but the endpoint reported every status as `0`. No
+error, no crash — it just always claimed the queue was empty.
+
+**Actually**
+
+```js
+for (const row of rows) { if (row in obj) obj[row] = row.count }
+```
+
+`row` is `{_id: "completed", count: 42}`, an object. The `in` operator coerces its left side
+to a string, so the test was `"[object Object]" in obj` — always `false`. The `if` never
+passed, nothing was ever written, and the zero-filled seed object was returned untouched. It
+needed `row._id` in both places.
+
+Worse than a crash: the safe-looking answer (all zeros) is indistinguishable from a real one.
+
+**Symptom (2)**
+`GET /jobs/stats` returned `400 {"error":"invalid id"}` — an error about IDs, from an
+endpoint that takes no ID.
+
+**Actually**
+Express matches routes in registration order, and `router.get("/:id")` matches any single
+segment — including the literal string `"stats"`. Registering `/stats` after it meant
+`findById("stats")` → CastError → the 400 from entry 2's error handler. The route existed and
+was simply never reached. Static routes must be registered before parameterised ones.
+
+**Symptom (3)**
+`require`ing the service crashed the entire API at module load with
+`ReferenceError: statuses is not defined`.
+
+**Actually**
+The function's closing brace was one loop too early, so half the body sat at file scope
+referring to locals that only exist inside the function. Same family as entry 12: the file
+parsed, and `node --check` was happy.
+
+**Concept**
+Seed the response with every status at `0`, read from `Job.schema.path("status").enumValues`
+rather than a hand-written list. `$group` only returns statuses that currently exist, so a
+status with no jobs is absent from the result entirely — and a caller cannot tell "zero" from
+"field missing because something broke". Reading the list off the schema also means adding a
+sixth status tomorrow needs no change here; the `failed` status added earlier today is exactly
+the drift that would otherwise have been missed.
+
+`total` is summed from `Object.values` of the five known statuses rather than from the raw
+rows, so it always equals the numbers displayed beside it even if the database holds a status
+outside the enum.

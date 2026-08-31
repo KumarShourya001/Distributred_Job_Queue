@@ -19,5 +19,9 @@ function broadcast(event) {
         }
     })
 }
-
-module.exports = { initWebSocket, broadcast }
+function closeWebSocket(){
+    if(!wss)return
+    wss.clients.forEach((client)=>client.close(1001,"server shutting down"))
+    wss.close()
+}
+module.exports = { initWebSocket, broadcast,closeWebSocket }
