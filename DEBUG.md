@@ -845,3 +845,131 @@ the drift that would otherwise have been missed.
 `total` is summed from `Object.values` of the five known statuses rather than from the raw
 rows, so it always equals the numbers displayed beside it even if the database holds a status
 outside the enum.
+
+---
+
+## 19. Backfilling `runAt` — Mongoose refused the aggregation pipeline
+
+**Context**
+Adding `runAt` for exponential backoff and scheduled jobs. New documents get it from the
+schema default; the 179 already in the collection had no such field. A query for
+`runAt: { $lte: now }` **does not match documents where the field is absent**, so any
+existing pending job would have become permanently unclaimable — silently, looking like the
+queue had simply stopped.
+
+**Symptom**
+
+```
+MongooseError: Cannot pass an array to query updates unless the `updatePipeline` option is set.
+```
+
+**Actually**
+`updateMany(filter, [{ $set: ... }])` is an *aggregation pipeline update*, which is what lets
+one field be set from another (`runAt: "$createdAt"`). A plain object update cannot reference
+another field. Mongoose 9 will not infer the intent from the array — it wants the option
+stated:
+
+```js
+await Job.updateMany(
+  { runAt: { $exists: false } },
+  [{ $set: { runAt: "$createdAt" } }],
+  { updatePipeline: true }
+)
+```
+
+**Result**
+179 documents modified, 0 left missing the field. Backfilled from `createdAt` rather than
+`now` so the original queue ordering is preserved.
+
+**Worth noting:** none of the 179 were `pending` — all were `completed`, `dead` or `failed`,
+which are never claimed again. The migration was correct to run, but the failure it guards
+against would not have appeared this time. Adding a field with a default is safe for new
+documents and silently wrong for old ones, and the gap only shows up in whichever states are
+still being queried.
+
+**Concept**
+`$exists: false` is the filter for "written before this field existed". Any new field that a
+query *filters on* needs a backfill; a new field that is only ever read back does not. `runAt`
+is filtered on in the claim query, so it did.
+
+---
+
+## 20. Thirty-three tests passed while three bugs sat in the new code
+
+**Symptom**
+Added the idempotency key: schema field, unique partial index, `createJob` rewritten to
+catch the duplicate-key error, route wired. `npm test` — 33 passing, 0 failing. Three of
+those four pieces were broken.
+
+**The three bugs**
+
+| Location | Bug |
+|---|---|
+| `Job.js` | The compound claim index was *replaced* rather than added alongside — `jobSchema.index(fields, options)` takes two arguments, and the third one holding `{status, priority, createdAt, runAt}` was silently ignored |
+| `jobService.js` | `const job = Job.create(...)` — no `await` |
+| `jobService.js` | `idempotencyKey` accepted as a parameter and never passed to `Job.create` |
+
+**Why the suite did not care — three separate reasons, worth separating**
+
+**1. The green run predated the code.** The last `npm test` ran just after the priority
+tests, before any of this existed. Obvious in hindsight; easy to take reassurance from a
+result that is simply out of date.
+
+**2. Nothing in the suite called `createJob`.** This is the real one.
+`safeUrl.test.js` never touches the database. `claim.test.js` calls `Job.create()`
+**directly**, bypassing the service layer. `retry.test.js` drives the worker, which only
+ever reads jobs. So `createJob` could have been an empty function and all 33 would still
+have been green.
+
+A passing suite means *the things I tested still work*. It never means *the code is
+correct*. Coverage is a statement about what was checked, not about what is true.
+
+**3. Bug 1 is invisible to tests by nature.** Dropping the compound index changes no
+result — the claim query returns exactly the same job, it just collection-scans and sorts
+in memory to get there. Correctness tests cannot see a performance regression. That one is
+caught by `.explain("executionStats")` and looking for a `SORT` stage, or by production
+when the collection grows.
+
+**The `await` bug, because it is the second time today**
+
+```js
+try {
+    const job = Job.create({...})    // returns a Promise immediately
+    return { job, created: true }    // try block exits here, successfully
+} catch (err) {                       // never runs
+    if (err.code === 11000) { ... }
+}
+```
+
+The `try` block completes before MongoDB has answered. When the duplicate-key error
+arrives there is no `try` left to catch it, so it escapes as an unhandled rejection —
+**`try`/`catch` around an un-awaited async call catches nothing**, and the idempotency
+branch was unreachable code.
+
+Node's test runner diagnosed this precisely once tests existed:
+
+> generated asynchronous activity after the test ended. This activity created the error
+> "E11000 duplicate key error collection: jobqueue_test.jobs index: idempotencyKey_1"
+> and would have caused the test to fail, but instead triggered an unhandledRejection event
+
+Same shape as `const job = claimJob(fence)` in `worker.js` earlier the same day: an async
+function called without `await`, returning a Promise that is then used as if it were the
+value. There the Promise was truthy so a `if (!job) return` guard never fired; here the
+Promise escaped a `try` block. One missing keyword, two different silent failures.
+
+**Proved by** reintroducing the missing `await` after writing six idempotency tests:
+all six failed. Restored, all six pass. That is the check worth doing on any new test —
+break the thing on purpose and confirm the test notices, or the test is decoration.
+
+**Concept**
+Every one of the three bugs is the same species as the rest of this log: *the code kept
+working and did nothing*. The route validated `idempotencyKey` and dropped it; the sort
+ordered by a field the schema misspelled; `process.emit(1)` logged politely and carried on.
+None of them throw. The recurring lesson is that the dangerous failures here are not
+crashes but **silent no-ops**, and the only reliable defence is asserting on the *effect* —
+write the value, read it back, and compare — rather than on the absence of an error.
+
+**Expect the follow-up:** *So what should the test suite have covered?*
+The service layer, which is the seam every write passes through. `claim.test.js` calling
+`Job.create()` directly was convenient and it left the real entry point untested. Test at
+the boundary the application actually uses.

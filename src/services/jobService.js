@@ -18,10 +18,27 @@ async function jobStats() {
     obj.total = Object.values(obj).reduce((n, c) => n + c, 0)
     return obj
  }
-async function createJob(type,payload) {
-    return await Job.create({type,payload})
+async function createJob(type, payload, runAt, priority,idempotencyKey) {
+    try{
+        const job = await Job.create({ type, payload, runAt, priority, idempotencyKey })
+        return {job,created:true}
+    }catch(err){
+        if(err.code==11000 && idempotencyKey){
+            return{job:await Job.findOne({idempotencyKey}),created:false}
+        }
+        throw err
+    }
 }
-
+async function retryJob(id) {
+    const job=await Job.findOneAndUpdate({_id:id,status:{$in:["dead","failed"]}},
+        {$set:{status:"pending",attempts:0,claimedAt:null,finishedAt:null,result:null,runAt:new Date()}},
+        {returnDocument:"after"}
+    )
+    return job
+}
+async function cancelJob(id) { 
+   return await Job.deleteOne({ _id: id, status: "pending" })
+ }
 async function listJobs(filter={},n=50){
     return await Job.find(filter).sort({createdAt:-1}).limit(n).lean()
 }
@@ -30,4 +47,4 @@ async function getJob(id) {
     return await Job.findById(id).lean()
 }
 
-module.exports = { createJob, listJobs, getJob,jobStats } 
+module.exports = { createJob, listJobs, getJob,jobStats,retryJob,cancelJob } 

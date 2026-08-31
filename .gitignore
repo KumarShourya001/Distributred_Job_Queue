@@ -48,3 +48,10 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 *.swp
+
+# ---- scratch / one-off scripts ----
+# Debug probes and data migrations get written, run once, and deleted. These
+# patterns stop one being committed by an `git add -A` before it is cleaned up.
+scratch*.js
+migrate*.js
+src/_*.js

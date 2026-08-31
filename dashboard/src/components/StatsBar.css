@@ -8,7 +8,14 @@
   .stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
 }
 
+/* Each counter is a filter toggle, so it's a real <button> — keyboard
+   focusable and announced with its pressed state, not a clickable div. */
 .stat {
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -18,6 +25,9 @@
   gap: 2px;
   position: relative;
   overflow: hidden;
+  transition: border-color 140ms var(--ease-out),
+              box-shadow 140ms var(--ease-out),
+              transform 140ms var(--ease-out);
 }
 
 /* Severity stripe: state is readable at a glance, not only by reading
@@ -28,6 +38,26 @@
   inset: 0 auto 0 0;
   width: 4px;
   background: var(--stat-color, var(--text-mute));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .stat:hover { border-color: var(--text-mute); }
+}
+
+.stat:active { transform: scale(0.985); }
+
+/* Active filter: the card reads as pressed, and not by colour alone — the
+   border thickens and the label gains a caret. */
+.stat[data-active] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-bg);
+}
+
+.stat[data-active] .label::after {
+  content: " ✕";
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .stat .label {

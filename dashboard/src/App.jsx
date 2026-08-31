@@ -15,6 +15,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [now, setNow] = useState(Date.now())
+  const [filter, setFilter] = useState(null)   // null = show everything
 
   async function load() {
     try {
@@ -94,6 +95,12 @@ export default function App() {
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   )
 
+  // Filtering is done over what's already loaded rather than refetching with
+  // ?status=. The panel header says "100 most recent", so this is honest, it's
+  // instant, and it avoids the question of what a live update should do when
+  // a job changes into or out of the active filter.
+  const visible = filter ? jobList.filter((j) => j.status === filter) : jobList
+
   return (
     <>
       <Masthead connected={connected} />
@@ -117,11 +124,18 @@ export default function App() {
         </div>
       )}
 
-      <StatsBar jobs={jobList} />
+      <StatsBar jobs={jobList} filter={filter} onFilter={setFilter} />
 
       <div className="main">
         <SubmitForm />
-        <JobsTable jobs={jobList} loading={loading} now={now} />
+        <JobsTable
+          jobs={visible}
+          total={jobList.length}
+          filter={filter}
+          onClearFilter={() => setFilter(null)}
+          loading={loading}
+          now={now}
+        />
       </div>
 
         <p className="foot">

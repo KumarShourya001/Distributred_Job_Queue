@@ -24,8 +24,24 @@ async function httpRequest(payload) {
     return { status: res.status, url }
 }
 
+async function sleepJob(payload) {
+    const ms = Number(payload.ms)
+
+    if (!Number.isFinite(ms) || ms < 0) {
+        throw new PermanentError("sleep needs a non-negative ms in the payload")
+    }
+    if (ms > 120000) {
+        throw new PermanentError("sleep ms is capped at 120000")
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, ms))
+
+    return { sleptMs: ms }
+}
+
 const handlers = {
-    http_request: httpRequest
+    http_request: httpRequest,
+    sleep: sleepJob
 }
 
 module.exports = { handlers }

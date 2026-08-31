@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "worker": "node src/worker/worker.js"
+    "worker": "node src/worker/worker.js",
+    "test": "node --test --test-concurrency=1"
   },
   "engines": {
     "node": ">=20"
@@ -19,4 +20,5 @@
     "ws": "^8.21.3",
     "zod": "^4.4.3"
   }
+  
 }
