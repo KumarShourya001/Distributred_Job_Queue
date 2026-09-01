@@ -8,15 +8,15 @@ const { claimJob } = require("./claim")
 const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS) || 10000
 const BASE_DELAY_MS = 1000
 const CONCURRENCY = Number(process.env.CONCURRENCY) || 1
+let shuttingDown=false
+let sweepTimer=null
+const MAX_ATTEMPTS=3
 function backoffMs(attempts) {
     let d=BASE_DELAY_MS*2**attempts
     d=Math.min(d,6000)
     d=d*(0.5+Math.random()*0.5)
     return d
 }
-let shuttingDown=false
-let sweepTimer=null
-const MAX_ATTEMPTS=3
 
 function sleep(ms){
     return new Promise(r=>setTimeout(r,ms))

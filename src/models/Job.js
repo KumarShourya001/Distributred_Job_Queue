@@ -1,5 +1,5 @@
 const mongoose = require("mongoose")
-
+const JOB_TTL_SECONDS = 604800
 const jobSchema = new mongoose.Schema({
   type: { type: String, required: true },
   payload: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -25,5 +25,8 @@ jobSchema.index(
   { idempotencyKey: 1 },
   { unique: true, partialFilterExpression: { idempotencyKey: { $type: "string" } } }
 )
-
+jobSchema.index(
+  { finishedAt: 1 },
+  { expireAfterSeconds: JOB_TTL_SECONDS }
+)
 module.exports = mongoose.model("Job", jobSchema)

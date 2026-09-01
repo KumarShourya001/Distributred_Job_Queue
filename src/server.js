@@ -6,6 +6,8 @@ const jobRoutes =require('./api/jobRoutes')
 const { initWebSocket, closeWebSocket } = require("./ws")
 const { watchJobChanges } = require("./changeStream")
 const http=require('http')
+const { requireApiKey } = require('./middleware/auth')
+const {rateLimit}=require('./middleware/rateLimit')
 const app=express()
 let server=null
 let stream=null
@@ -26,7 +28,7 @@ app.use(express.json())
 const cors = (req, res, next) => {
     res.header('Access-Control-Allow-Origin', config.corsOrigin);
     res.header('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-KEY');
     res.header("Vary","Origin");
     if(req.method==="OPTIONS"){
       return res.sendStatus(204)
@@ -34,8 +36,8 @@ const cors = (req, res, next) => {
     next();
 };
 app.use(cors)
-app.use("/jobs",jobRoutes)
 
+app.use("/jobs", rateLimit, requireApiKey, jobRoutes)
 app.use((err, req, res, next) => {
    if (err.name === "CastError") {
     return res.status(400).json({ error: "invalid id" })
