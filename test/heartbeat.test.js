@@ -15,6 +15,15 @@ let stdout = ""
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
+function logLines(out) {
+  return out
+    .split(/\r?\n/)
+    .filter((l) => l.trim().startsWith("{"))
+    .map((l) => { try { return JSON.parse(l) } catch { return null } })
+    .filter(Boolean)
+}
+
+
 async function waitForStatus(id, status, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs
   let last = null
@@ -84,11 +93,12 @@ test("a job outliving its lease is claimed exactly once", async () => {
 
   const done = await waitForStatus(job._id, "completed")
 
-  const claims = stdout.split("\n").filter((l) => l.includes("claimed") && l.includes(id)).length
+  const entries = logLines(stdout)
+  const claims = entries.filter((e) => e.msg === "claimed" && e.jobId === id).length
   assert.strictEqual(claims, 1, `job was claimed ${claims} times; the lease was not held`)
 
-  assert.ok(!stdout.includes("lost claim"), "no result should have been discarded")
-  assert.ok(!stdout.includes("swept"), "the sweeper should not have reclaimed a live job")
+  assert.ok(!entries.some((e) => e.msg === "lost claim"), "no result should have been discarded")
+  assert.ok(!entries.some((e) => e.msg.startsWith("swept")), "the sweeper should not have reclaimed a live job")
 
   assert.strictEqual(done.attempts, 0)
   assert.deepStrictEqual(done.result, { sleptMs: JOB_MS })

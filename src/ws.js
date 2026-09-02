@@ -1,12 +1,13 @@
 const { WebSocketServer } = require("ws")
 
+const log = require("./loggers")
 let wss = null
 
 function initWebSocket(server) {
     wss = new WebSocketServer({ server })
     wss.on("connection", (ws) => {
-        console.log("dashboard client connected")
-        ws.on("close", () => console.log("dashboard client disconnected"))
+        log.debug("dashboard client connected")
+        ws.on("close", () => log.debug("dashboard client disconnected"))
     })
 }
 

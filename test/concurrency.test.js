@@ -14,6 +14,15 @@ let uri = null
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
+function logLines(out) {
+  return out
+    .split(/\r?\n/)
+    .filter((l) => l.trim().startsWith("{"))
+    .map((l) => { try { return JSON.parse(l) } catch { return null } })
+    .filter(Boolean)
+}
+
+
 function startWorker(concurrency, onLine) {
   const w = spawn(process.execPath, [WORKER], {
     env: { ...process.env, MONGO_URI: uri, CONCURRENCY: String(concurrency) },
@@ -92,11 +101,12 @@ test("concurrency does not let two slots take the same job", async () => {
   }
 
   // Two slots racing inside one process are the same race as two worker processes.
+  const entries = logLines(out)
   for (const id of ids) {
-    const claims = out.split("\n").filter((l) => l.includes("claimed") && l.includes(String(id))).length
+    const claims = entries.filter((e) => e.msg === "claimed" && e.jobId === String(id)).length
     assert.strictEqual(claims, 1, `job ${id} was claimed ${claims} times`)
   }
-  assert.ok(!out.includes("lost claim"), "no result should have been discarded")
+  assert.ok(!entries.some((e) => e.msg === "lost claim"), "no result should have been discarded")
   assert.strictEqual(await Job.countDocuments({ _id: { $in: ids }, attempts: 0 }), 6)
 })
 
@@ -141,8 +151,9 @@ test("shutdown waits for every in-flight job, not just one", async () => {
   const exited = await new Promise((resolve) => worker.on("exit", (code) => resolve(code)))
 
   const completed = await Job.countDocuments({ _id: { $in: ids }, status: "completed" })
-  assert.ok(out.includes("SIGTERM received"), "the shutdown handler should have run")
+  const entries = logLines(out)
+  assert.ok(entries.some((e) => e.msg === "shutdown requested" && e.signal === "SIGTERM"), "the shutdown handler should have run")
   assert.strictEqual(completed, 4, `only ${completed} of 4 in-flight jobs finished before exit`)
   assert.strictEqual(exited, 0, "a drained shutdown should exit 0")
-  assert.ok(out.includes("worker stopped cleanly"))
+  assert.ok(entries.some((e) => e.msg === "worker stopped cleanly"))
 })

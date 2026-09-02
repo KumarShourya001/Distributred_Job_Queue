@@ -973,3 +973,222 @@ write the value, read it back, and compare — rather than on the absence of an 
 The service layer, which is the seam every write passes through. `claim.test.js` calling
 `Job.create()` directly was convenient and it left the real entry point untested. Test at
 the boundary the application actually uses.
+
+---
+
+## 21. A permanent denial of service in the gap between three working defences
+
+**Symptom**
+None. Every test passed, all three protection layers behaved exactly as designed, and the
+system could be bricked forever by an unauthenticated caller.
+
+**The attack**
+`POST /jobs` with `runAt: "9999-12-31"`. The job sits in `pending` for eight thousand years.
+
+- The **rate limiter** slows submission but does not stop it
+- The **TTL index** is on `finishedAt`, and a pending job never has one, so it never expires
+- The **queue depth cap** counted `{ status: "pending" }`, so it counted this job as backlog
+
+Ten thousand of those and `MAX_QUEUE_DEPTH` is exhausted **permanently**. Every later
+submission returns 503. There is no bulk purge — `DELETE /jobs/:id` handles one at a time and
+needs the id — so recovery means going into Atlas by hand.
+
+At the configured rate limit it takes about 85 minutes to execute. Verified: 20 far-future
+jobs against a cap of 20 made every subsequent submission fail.
+
+**Actually**
+No individual component was wrong. Scheduled jobs work correctly. TTL on `finishedAt` is the
+right field. The depth cap counts the right status. The vulnerability lives in the *gap
+between* them: nothing in the system expires a pending job, and a scheduled job is pending
+indefinitely.
+
+The deeper error was **semantic**. `MAX_QUEUE_DEPTH` is meant to answer "how much work is
+waiting to be done", but it was measuring "how many documents have status pending" — which
+includes work that is not due and that no worker could take. Two different questions that
+happened to have the same answer until scheduling was added in Tier 2.
+
+**Fixed by** splitting the count into the two things it had been conflating:
+
+- **runnable** — `status: "pending"` AND `runAt <= now`, capped by `MAX_QUEUE_DEPTH`
+- **scheduled** — `status: "pending"` AND `runAt > now`, capped by `MAX_SCHEDULED`
+
+plus a ceiling on `runAt` at submission, so nothing can be booked beyond the retention
+horizon.
+
+**Concept — the logical queue split, and why there is only one collection**
+Redis-backed queues (BullMQ, Sidekiq) keep delayed jobs in a *physically separate* structure:
+a sorted set for delayed work, a list for ready work. That is a consequence of Redis having
+no query language — "find the jobs whose time has come" needs a structure already sorted by
+time.
+
+MongoDB can filter, so the same separation falls out of a query. `runAt <= now` **is** the
+ready queue; `runAt > now` **is** the delayed set. Same logical model, no second collection,
+no migration job shuffling documents between them. The right answer differs by storage
+engine, not by design.
+
+**The part worth understanding: the runnable cap governs admission, not depth**
+Ten thousand jobs scheduled for 3pm all become runnable at 3pm. No request arrives, so there
+is nothing to reject, and the runnable count sails past its cap on its own.
+
+That is inherent to any scheduler, not a flaw. But it means the cap controls *admission*, and
+the real bound on that future spike is `MAX_SCHEDULED`, which is quietly doing more work than
+its name suggests. Smoothing the spike itself would need admission control at dispatch time,
+which is a different feature.
+
+**Expect the follow-up:** *Why not put a TTL on pending jobs too?*
+TTL deletes documents whose date is in the **past**, so a TTL on `runAt` would delete jobs
+that are due and waiting — the opposite of what is wanted. Pending jobs are bounded by the
+`runAt` ceiling and the two caps instead. There is still no bulk purge, and that remains an
+operational gap.
+
+**Also fixed in the same pass:** `express.json()` had no `limit`, so its 100KB default meant
+10,000 jobs could reach 1GB against M0's 512MB. A count-based cap bounds nothing while a
+single document can be arbitrarily large. Now capped at 16KB.
+
+---
+
+## 22. Numbers that were each defensible and wrong together
+
+**Symptom**
+None yet. Found by arithmetic during the audit rather than by anything failing.
+
+**The sum**
+Three limits, each chosen sensibly on its own:
+
+| Limit | Value |
+|---|---|
+| rate limit | 2 requests/sec sustained |
+| TTL retention | 7 days |
+| measured document cost | ~400 bytes with indexes |
+
+```
+2/sec x 86,400 x 7 days = 1,209,600 documents
+x 400 bytes             = 484 MB
+```
+
+M0 provides **512 MB**. Someone submitting at exactly the permitted rate, for exactly the
+retention window, consumes essentially the whole cluster without ever breaking a rule.
+
+**Actually**
+Every layer was reviewed in isolation and each was fine. Nobody multiplied them. The storage
+ceiling of a queue is not set by any single limit, it is set by **arrival rate x retention x
+document size**, and that product appears in no config file and no code path.
+
+Measured rather than assumed: `collStats` reports `avgObjSize` of 195 bytes on the real
+collection, with index overhead inflated at small scale by minimum allocations. 400 bytes
+all-in is the working figure.
+
+**Concept**
+Composable limits do not compose into a safe system automatically. Three defences that each
+pass review can still multiply into a number nobody intended. The question to ask of any set
+of quotas is not "is each one reasonable" but "what is the worst case they jointly permit".
+
+**Open:** shortening TTL to 3 days brings the worst case to about 207 MB. Not yet decided.
+
+---
+
+## 23. Six positional arguments, and the typo the editor made valid
+
+**Context**
+Adding `traceId` to `createJob` would have made the signature six positional parameters:
+
+```js
+createJob(type, payload, runAt, priority, idempotencyKey, traceId)
+```
+
+It grew one argument at a time across Tier 2 — `runAt` for scheduling, `priority`, then
+`idempotencyKey` — and each addition looked harmless on its own.
+
+**Why that is worse than ugly**
+Positional arguments are silently order-sensitive. Swap `priority` and `idempotencyKey` at
+one call site and nothing errors:
+
+- `priority` receives `"order-42"`, which `Number()` turns into `NaN`
+- `idempotencyKey` receives `0`, which is falsy, so the duplicate-key branch never fires
+
+No exception, no failed test, a job that sorts wrongly and is no longer idempotent. That is
+the same species as most of this log: **the code runs and does the wrong thing.**
+
+The tell that it had gone too far was already visible at the call site — two of the five
+arguments were placeholders:
+
+```js
+createJob("http_request", {}, undefined, 0, "burst-key")
+```
+
+`undefined, 0` exists only to reach the fifth parameter. Once a call is mostly padding, the
+signature is the problem.
+
+**Fixed by** a destructured options object:
+
+```js
+async function createJob({ type, payload, runAt, priority, idempotencyKey, traceId } = {})
+```
+
+- Order stops mattering, so a mis-ordered call becomes impossible rather than silent
+- Every call site names what it passes, so it reads as documentation
+- Optional fields can be omitted entirely instead of padded with `undefined, 0`, which means
+  the tests now exercise the schema defaults rather than pinning them
+- The body needs almost no change: object shorthand in `Job.create({ ... })` works because
+  the destructured names already match the schema field names
+
+**The `= {}` default is not decoration.** Without it, `createJob()` with no argument throws
+`TypeError: Cannot destructure property 'type' of undefined` — a crash instead of a
+validation failure.
+
+**Concept**
+Positional parameters are a fixed budget. Three is comfortable, four is a smell, five means
+the next addition should be the refactor. The cost is paid once and it only grows: this
+change touched two files, and waiting would have meant more.
+
+---
+
+**And a new species of bug, found in the same step.**
+
+The `traceId` field was added to the schema as:
+
+```js
+traceId: { type: string }
+```
+
+Lowercase `string`. That should be an instant `ReferenceError` — there is no such global in
+JavaScript, only `String`. Confirmed in isolation:
+
+```
+node -e "console.log({type: string})"  ->  ReferenceError: string is not defined
+```
+
+But `Job.js` loaded fine and reported the field's type as `String`, apparently correct.
+
+**Actually**
+Line 2 of the file had grown, unnoticed:
+
+```js
+const { string } = require("zod")
+```
+
+The editor had auto-imported it. `string` now resolved — to **zod's** string validator
+factory, which has nothing to do with Mongoose. Mongoose received a function it did not
+recognise as a type, fell back to `String`, and carried on. The field happened to end up
+correct **by accident**.
+
+Found by inspecting the schema path rather than trusting that it loaded:
+
+```
+options : SchemaStringOptions { type: [Function: string] }   <- lowercase: zod's
+instance: String                                             <- right answer, wrong reason
+```
+
+**Concept**
+This is not a typo the developer made; it is a typo the **tooling turned into valid code**.
+Auto-import converted an error that would have surfaced in one second into a program that
+runs and is quietly wrong. It is most dangerous exactly when the mistaken name happens to
+exist somewhere importable — and `string`, `number`, `date` and `object` are all real zod
+exports, so every lowercase primitive typo in this project has a resolution waiting for it.
+
+The defence is not vigilance about typing. It is checking the *effect*: `schema.path(name)`
+reports what Mongoose actually built, and comparing that against a field known to be correct
+takes seconds. "It loaded" is not the same as "it is what I meant".
+
+Both the lowercase `string` and the stray zod import were removed; `Job.js` has no reason to
+import zod at all.

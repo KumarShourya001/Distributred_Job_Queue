@@ -8,10 +8,17 @@ const { watchJobChanges } = require("./changeStream")
 const http=require('http')
 const { requireApiKey } = require('./middleware/auth')
 const {rateLimit}=require('./middleware/rateLimit')
+const {traceids}=require('./middleware/traceid')
 const app=express()
+const log = require("./loggers")
+if (config.TRUST_PROXY !== false) app.set("trust proxy", config.TRUST_PROXY)
 let server=null
 let stream=null
 let shuttingDown=false
+
+
+app.use(traceids)
+
 app.get("/health",(req,res)=>{
   const states=["disconnected", "connected", "connecting", "disconnecting"]
   const mongo=states[mongoose.connection.readyState]|| "unknown"
@@ -23,7 +30,6 @@ app.get("/health",(req,res)=>{
   })
 })
 
-app.use(express.json())
 
 const cors = (req, res, next) => {
     res.header('Access-Control-Allow-Origin', config.corsOrigin);
@@ -36,36 +42,43 @@ const cors = (req, res, next) => {
     next();
 };
 app.use(cors)
-
-app.use("/jobs", rateLimit, requireApiKey, jobRoutes)
+// Body parsing is scoped to /jobs and runs after the guards, so an unauthenticated or
+// rate-limited request is never parsed. Any route added outside /jobs will see req.body
+// as undefined.
+app.use("/jobs", rateLimit, requireApiKey, express.json({limit:'16kb'}),jobRoutes)
 app.use((err, req, res, next) => {
    if (err.name === "CastError") {
     return res.status(400).json({ error: "invalid id" })
   }
-  console.error(err)
+  const status = err.status ?? err.statusCode
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return res.status(status).json({ error: err.expose ? err.message : "bad request" })
+  }
+
+  log.error("unhandled error", { err: err.message, traceId: req.traceId })
   res.status(500).json({ error: "internal server error" })
 })
 async function main() {
-  console.log("connecting...")
+  log.info("connecting to mongo")
   await mongoose.connect(config.mongoUri)
-  console.log("connected")
+  log.info("mongo connected")
   
   server = http.createServer(app) 
   server.on("error",(err)=>{
-    console.error("server error:",err.message)
+    log.error("server error", { err: err.message })
     process.exit(1)
   })
   initWebSocket(server)
   stream=watchJobChanges()
-  server.listen(config.port,()=>console.log(`listen on ${config.port}`))
+  server.listen(config.port,()=>log.info("listening", { port: config.port }))
 
 }
 async function shutdown(signal) {
   if(shuttingDown)return
   shuttingDown=true
-  console.log(signal,"received - shutting down")
+  log.info("shutdown requested", { signal })
   const force=setTimeout(()=>{
-    console.error("forced exit")
+    log.error("forced exit")
     process.exit(1)
 
   },10000)
@@ -76,7 +89,7 @@ async function shutdown(signal) {
   if(stream)await stream.close()
   await mongoose.disconnect()
 clearTimeout(force)
-console.log("server stopped cleanly")
+log.info("server stopped cleanly")
 process.exit(0)
 
 }

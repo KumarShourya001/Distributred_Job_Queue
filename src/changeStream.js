@@ -1,6 +1,7 @@
 const Job=require("./models/Job")
 const {broadcast}=require("./ws")
 
+const log = require("./loggers")
 function watchJobChanges(onEvent = broadcast){
     let stream = null
     let resumeToken = null
@@ -33,7 +34,7 @@ function watchJobChanges(onEvent = broadcast){
     }
     function reconnect(err){
         if(stopped|| timer)return
-        console.error("change stream error: ",err.message)
+        log.error("change stream error", { err: err.message })
         const delay=Math.min(1000*2**attempts,30000)
         attempts++
         timer=setTimeout(()=>{timer=null;start()},delay)
@@ -44,7 +45,7 @@ function watchJobChanges(onEvent = broadcast){
         return stream?stream.close():Promise.resolve()
     }
     start()
-    console.log("watching job changes")
+    log.info("watching job changes")
     return {close}
 }
 module.exports={watchJobChanges}

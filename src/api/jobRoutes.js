@@ -10,21 +10,23 @@ const {
   retryJob,
   cancelJob,
 } = require("../services/jobService");
+const  config = require("../config/index");
 
 const jobTypes = Object.keys(handlers);
 const schema = z.object({
   type: z.enum(jobTypes),
   payload: z.record(z.any()).default({}),
-  runAt: z.coerce.date().optional(),
+  runAt: z.coerce.date().refine((val)=>val<Date.now()+config.MAX_RUNAT_DAYS*86400000,{message:"LIMIT EXCEEDED"}).optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
-  priority: z.coerce.number().int().default(0),
+  priority: z.coerce.number().int().min(-10).max(10).default(0),
 });
 
 const listQuerySchema = z.object({
   status: z
-    .enum(["pending", "claimed", "completed", "failed", "dead"])
+    .enum(["pending", "cursor","claimed", "completed", "failed", "dead"])
     .optional(),
   limit: z.coerce.number().int().positive().max(100).default(50),
+  cursor: z.string().regex(/^[0-9a-f]{24}$/i).optional(),
 });
 router.get("/stats", async (req, res) => {
   res.json(await jobStats());
@@ -34,10 +36,10 @@ router.get("/", async (req, res) => {
   if (!result.success) {
     return res.status(400).json({ error: "invalid request query" });
   }
-  const { status, limit } = result.data;
+  const { status, limit, cursor } = result.data;
   const filter = status ? { status } : {};
-  const jobs = await listJobs(filter, limit);
-  res.json(jobs);
+  const { jobs, nextCursor } = await listJobs(filter, limit, cursor);
+  res.json({ jobs, nextCursor });
 });
 
 router.get("/:id", async (req, res) => {
@@ -53,16 +55,13 @@ router.post("/", async (req, res) => {
   if (!result.success) {
     return res.status(400).json({ error: "invalid request body" });
   }
-  const { job, created,full } = await createJob(
-    result.data.type,
-    result.data.payload,
-    result.data.runAt,
-    result.data.priority,
-    result.data.idempotencyKey,
-  );
-  if(full){
-    res.set("Retry-After","30")
-    return res.status(503).json({error:"queue is full"})
+  const { job, created,full } = await createJob({ ...result.data, traceId: req.traceId });
+  if (full) {
+    const scheduled = full === "scheduled";
+    res.set("Retry-After", scheduled ? "300" : "30");
+    return res.status(503).json({
+      error: scheduled ? "too many scheduled jobs" : "queue is full",
+    });
   }
   res.status(created ? 202 : 200).json({ id: job._id });
 });

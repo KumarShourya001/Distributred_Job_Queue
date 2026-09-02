@@ -39,9 +39,14 @@ async function sleepJob(payload) {
     return { sleptMs: ms }
 }
 
+async function fail(payload) {
+    throw new Error(payload.message||"simulated failure")
+}
+
 const handlers = {
     http_request: httpRequest,
-    sleep: sleepJob
+    sleep: sleepJob,
+    fail:fail,
 }
 
 module.exports = { handlers }

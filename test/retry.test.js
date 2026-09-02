@@ -78,8 +78,8 @@ test("an unknown job type is permanent, not retried", async () => {
 
 test("a transient failure is retried three times then dead-lettered", async () => {
   const job = await Job.create({
-    type: "http_request",
-    payload: { url: "https://example.com/", shouldFail: true }
+    type: "fail",
+    payload: {}
   })
 
   const done = await waitForTerminal(job._id)
@@ -93,8 +93,8 @@ test("a transient failure is retried three times then dead-lettered", async () =
 test("retries are spaced by exponential backoff, not just the poll interval", async () => {
   const started = Date.now()
   const job = await Job.create({
-    type: "http_request",
-    payload: { url: "https://example.com/", shouldFail: true }
+    type: "fail",
+    payload: {}
   })
 
   await waitForTerminal(job._id)

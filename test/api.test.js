@@ -88,7 +88,8 @@ test("every rejection gives the same body, leaking nothing", async () => {
 test("the correct API key is accepted", async () => {
   const res = await get(AUTH_PORT, "/jobs", { "X-API-Key": KEY })
   assert.strictEqual(res.status, 200)
-  assert.ok(Array.isArray(await res.json()))
+  const body = await res.json()
+  assert.ok(Array.isArray(body.jobs), "GET /jobs returns { jobs, nextCursor }")
 })
 
 test("the header name is case-insensitive", async () => {

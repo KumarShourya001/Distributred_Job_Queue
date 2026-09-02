@@ -8,6 +8,7 @@ const { claimJob } = require("./claim")
 const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS) || 10000
 const BASE_DELAY_MS = 1000
 const CONCURRENCY = Number(process.env.CONCURRENCY) || 1
+const log = require("../loggers")
 let shuttingDown=false
 let sweepTimer=null
 const MAX_ATTEMPTS=3
@@ -28,23 +29,22 @@ async function tick() {
         const job=await claimJob(fence)
         if (!job) return
         const id=job._id
+        const traceId=job.traceId
         let currentFence=fence
-        console.log("claimed",job._id.toString())
+        log.info("claimed", { jobId: id.toString(), type: job.type, traceId })
         try{
             const handler=handlers[job.type]
             if(!handler){
                 throw new PermanentError(`no handler for type: ${job.type}`)
             }
-            if (job.payload && job.payload.shouldFail) {
-                throw new Error("simulated failure")
-            }
+            
 
             let inFlight=Promise.resolve()
             const heartbeat=setInterval(()=>{
                 const next=new Date()
                 inFlight=Job.updateOne({_id:id,claimedAt:currentFence},{$set:{claimedAt:next}})
                     .then((res)=>{ if(res.modifiedCount) currentFence=next })
-                    .catch((err)=>console.error("heartbeat failed:",err.message))
+                    .catch((err)=>log.error("heartbeat failed", { jobId: id.toString(), err: err.message, traceId }))
             },HEARTBEAT_MS)
 
             let result
@@ -60,11 +60,11 @@ async function tick() {
                 {$set:{status:"completed",result,finishedAt:new Date()}}
             )
             if(!done){
-                console.log("lost claim,discarding result",id.toString())
+                log.warn("lost claim", { jobId: id.toString(), discarded: "result", traceId })
                 return
             }
 
-            console.log("completed",job._id.toString())
+            log.info("completed", { jobId: id.toString(), traceId })
         }
         catch(joberr){
             const attempts=job.attempts+1
@@ -82,21 +82,21 @@ async function tick() {
                 {$set:update}
             )
             if(!updated){
-                console.log("lost claim,discarding failure",id.toString())
+                log.warn("lost claim", { jobId: id.toString(), discarded: "failure", traceId })
                 return
             }
-            console.log(`${update.status} ${id} attempt ${attempts}`)
+            log.info("job settled", { jobId: id.toString(), status: update.status, attempts, traceId })
         }
     }
     catch(err){
-        console.error("tick failed:",err)
+        log.error("tick failed", { err: err.message })
     }
 }
 
 function requestShutdown(signal){
     if(shuttingDown)return
     shuttingDown=true
-    console.log(signal,"received - finishing current job, then exiting")
+    log.info("shutdown requested", { signal })
 }
 const running = new Set()
 process.on('SIGTERM',()=>requestShutdown("SIGTERM"))
@@ -113,13 +113,13 @@ async function loop() {
   await Promise.allSettled(running)
   clearInterval(sweepTimer)
   await mongoose.disconnect()
-  console.log("worker stopped cleanly")
+  log.info("worker stopped cleanly")
   process.exit(0)
 }
 
 async function main() {
     await mongoose.connect(config.mongoUri)
-    console.log("worker up")
+    log.info("worker up", { concurrency: CONCURRENCY })
     sweepTimer=setInterval(sweep,5000)
     loop()
 }

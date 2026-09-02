@@ -1,5 +1,6 @@
 const Job = require("../models/Job.js");
 const config = require("../config")
+const mongoose = require("mongoose")
 
 async function jobStats() {
   const statuses = Job.schema.path("status").enumValues;
@@ -19,17 +20,35 @@ async function jobStats() {
   obj.total = Object.values(obj).reduce((n, c) => n + c, 0);
   return obj;
 }
-async function createJob(type, payload, runAt, priority, idempotencyKey) {
-    const pending = await Job.countDocuments({ status: "pending" })
-    if (pending >= config.MAX_QUEUE_DEPTH) {
-        return { job: null, created: false, full: true }
+async function createJob({ type, payload, runAt, priority, idempotencyKey, traceId } = {}) {
+  const now = new Date();
+  const isScheduled = Boolean(runAt) && runAt > now;
+
+  if (isScheduled) {
+    const scheduled = await Job.countDocuments({
+      status: "pending",
+      runAt: { $gt: now },
+    });
+    if (scheduled >= config.MAX_SCHEDULED) {
+      return { job: null, created: false, full: "scheduled" };
     }
-    try {
+  } else {
+    const runnable = await Job.countDocuments({
+      status: "pending",
+      runAt: { $lte: now },
+    });
+    if (runnable >= config.MAX_QUEUE_DEPTH) {
+      return { job: null, created: false, full: "queue" };
+    }
+  }
+
+  try {
     const job = await Job.create({
       type,
       payload,
       runAt,
       priority,
+      traceId,
       idempotencyKey,
     });
     return { job, created: true };
@@ -60,9 +79,22 @@ async function retryJob(id) {
 async function cancelJob(id) {
   return await Job.deleteOne({ _id: id, status: "pending" });
 }
-async function listJobs(filter = {}, n = 50) {
-  return await Job.find(filter).sort({ createdAt: -1 }).limit(n).lean();
+async function listJobs(filter = {}, n = 50, cursor = null) {
+  const query = cursor
+    ? { ...filter, _id: { $lt: new mongoose.Types.ObjectId(cursor) } }
+    : filter;
+
+  const rows = await Job.find(query).sort({ _id: -1 }).limit(n + 1).lean();
+
+  const hasMore = rows.length > n;
+  const jobs = hasMore ? rows.slice(0, n) : rows;
+
+  return {
+    jobs,
+    nextCursor: hasMore ? String(jobs[jobs.length - 1]._id) : null,
+  };
 }
+
 
 async function getJob(id) {
   return await Job.findById(id).lean();
