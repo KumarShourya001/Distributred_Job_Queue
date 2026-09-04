@@ -1192,3 +1192,69 @@ takes seconds. "It loaded" is not the same as "it is what I meant".
 
 Both the lowercase `string` and the stray zod import were removed; `Job.js` has no reason to
 import zod at all.
+
+---
+
+## 24. The optimisation that measured out to three milliseconds
+
+**Symptom**
+None. This entry exists because a planned optimisation turned out to be worthless, and the
+reason it was worthless is more useful than the optimisation would have been.
+
+**The claim**
+`createJob` counts the queue before every insert, to enforce `MAX_QUEUE_DEPTH`:
+
+```js
+const runnable = await Job.countDocuments({ status: "pending", runAt: { $lte: now } })
+```
+
+`countDocuments` with a filter is linear in matching documents - MongoDB walks every matching
+index key to add it up. It sits on the submission hot path, so it was written down as a
+caching candidate: the cap is soft anyway, a count one second stale changes no guarantee.
+
+The supporting number quoted at the time was "42ms at 4,000 pending jobs".
+
+**Actually**
+That 42ms was never measured against a baseline. Seeding the test database to real depth and
+timing the count against the cost of a trivial query gives:
+
+```
+network floor (one trivial query): 37.6ms
+
+pending   countDocuments   over floor
+0         38.1ms           +0.6ms
+1000      39.3ms           +1.7ms
+4000      38.9ms           +1.3ms
+10000     40.6ms           +3.0ms      <- at MAX_QUEUE_DEPTH
+```
+
+The count is linear as expected, but the constant is tiny: **3ms at the cap**. The other
+37.6ms is round-trip latency to Atlas, paid by any query whatsoever, and paid again by the
+`Job.create` that follows. Caching would have removed 3ms from an operation that cannot cost
+less than about 80ms.
+
+The original 42ms was the whole round trip. Attributing all of it to the count made a network
+cost look like a compute cost, and pointed the fix at the wrong layer entirely.
+
+**Concept**
+An optimisation needs a baseline, not a stopwatch. A measurement with nothing subtracted from
+it cannot distinguish work from waiting, and on a remote database the waiting dominates so
+completely that almost any local computation disappears into it. "This operation takes 42ms"
+is not evidence that the operation is slow - it is evidence that the database is far away.
+
+The usual lesson from profiling is that the bottleneck is somewhere surprising. This is the
+same lesson pointed the other way: sometimes there is no bottleneck, and the honest outcome
+of measuring is that the work should not be done.
+
+**What was kept**
+The only cache-related change worth making had nothing to do with performance. Authenticated,
+user-scoped responses were being sent with no cache directives at all, which permits an
+intermediary to store one user's job list and serve it to another. One line in the `cors`
+middleware:
+
+```js
+res.header('Cache-Control', 'no-store');
+```
+
+Verified against a live server: present on `/auth/login`, `/jobs`, `/jobs/stats` and on a 401,
+absent on `/health` - which is registered before the middleware and needs no protection.

@@ -17,8 +17,15 @@ const RATE_REFILL_PER_SEC = Number(process.env.RATE_REFILL_PER_SEC) || 2;
 const MAX_SCHEDULED = Number(process.env.MAX_SCHEDULED || 5000);
 const MAX_RUNAT_DAYS = Number(process.env.MAX_RUNAT_DAYS || 3);
 const TRUST_PROXY = process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) : false;
+const JWT_SECRET = process.env.JWT_SECRET || null;
+const SESSION_TTL = process.env.SESSION_TTL || "7d";
+const NODE_ENV = process.env.NODE_ENV || "development";
+const IS_PRODUCTION = NODE_ENV === "production";
 if (!mongoUri) {
   throw new Error("MONGO_URI is not set in .env");
+}
+if (JWT_SECRET === null) {
+  throw new Error("JWT_SECRET is not set in .env");
 }
 if (API_KEY === null) {
   throw new Error("API_KEY not Found");
@@ -38,5 +45,9 @@ module.exports = {
   MAX_RUNAT_DAYS,
   MAX_SCHEDULED,
   TRUST_PROXY,
+  JWT_SECRET,
+  SESSION_TTL,
+  NODE_ENV,
+  IS_PRODUCTION,
   LOG_LEVEL,
 };

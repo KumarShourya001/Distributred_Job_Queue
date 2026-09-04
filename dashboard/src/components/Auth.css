@@ -1,0 +1,284 @@
+/* Auth screens. Deliberately reuses the tokens and control shapes from
+   index.css and SubmitForm.css — an auth page that looks like a different
+   product is the fastest way to make a dashboard feel bolted together. */
+
+.auth-page {
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  padding: 32px 20px 24px;
+  gap: 24px;
+}
+
+.auth-col {
+  width: 100%;
+  max-width: 400px;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---- brand ------------------------------------------------------------ */
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The squid-ink chip carries the masthead's colour down to a screen that has
+   no masthead, so the two pages read as one product. */
+.auth-brand .mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--header-bg);
+  color: var(--text-invert);
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  flex: none;
+}
+
+.auth-brand .name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---- card ------------------------------------------------------------- */
+
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+
+  /* Seen rarely, so a short entrance is affordable. Kept to opacity plus a
+     6px rise: enough to register as "this view changed", not enough to
+     delay anyone signing in. Reduced-motion is neutralised globally. */
+  animation: auth-in 240ms var(--ease-out) both;
+}
+
+@keyframes auth-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.auth-card h1 {
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+
+.auth-card .sub {
+  font-size: 13px;
+  color: var(--text-mid);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---- inputs ----------------------------------------------------------- */
+
+.auth-form input {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--sans);
+  border: 1px solid var(--border-input);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  transition: border-color 140ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .auth-form input:hover { border-color: var(--text-mid); }
+}
+
+/* A field the user has been sent back to fix reads as an error until they
+   touch it again — the red border and the message appear and clear together. */
+.auth-form input[aria-invalid="true"] { border-color: var(--dead); }
+
+/* Chrome paints autofilled inputs a hard yellow that ignores the palette.
+   There is no property to turn it off, so the standard workaround is an
+   inset shadow thick enough to cover the field, plus a transition long
+   enough that the yellow never gets a chance to paint. */
+.auth-form input:-webkit-autofill,
+.auth-form input:-webkit-autofill:hover,
+.auth-form input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  caret-color: var(--text);
+  transition: background-color 100000s ease 0s;
+}
+
+/* ---- password field --------------------------------------------------- */
+
+.pw-wrap { position: relative; }
+
+/* Room for the reveal button, so a long password never slides under it. */
+.pw-wrap input { padding-right: 62px; }
+
+.pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pw-toggle:hover { text-decoration: underline; }
+}
+
+/* ---- caps lock -------------------------------------------------------- */
+
+.caps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--failed);
+}
+
+.caps::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--failed);
+  flex: none;
+}
+
+/* ---- submit ----------------------------------------------------------- */
+
+/* Full width, unlike the job form's inline pill: it is the only action on the
+   screen, and a fixed width means "Sign in" -> "Signing in…" cannot reflow. */
+.auth-submit {
+  appearance: none;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--text-invert);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 20px;
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out), background 160ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .auth-submit:hover:not(:disabled) { background: var(--accent-hi); }
+}
+
+.auth-submit:active:not(:disabled) { transform: scale(0.98); }
+
+.auth-submit:disabled {
+  background: var(--surface-2);
+  color: var(--text-mute);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+/* ---- switch line ------------------------------------------------------ */
+
+.auth-alt {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 16px;
+  font-size: 13px;
+  color: var(--text-mid);
+  text-align: center;
+}
+
+.auth-alt button {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .auth-alt button:hover { text-decoration: underline; }
+}
+
+.auth-foot {
+  font-size: 12px;
+  color: var(--text-mute);
+  text-align: center;
+  max-width: 46ch;
+  line-height: 1.6;
+}
+
+/* ---- field stack & messages ------------------------------------------- */
+/* Deliberately named .auth-* rather than reusing SubmitForm's .field/.msg:
+   those only exist once SubmitForm's stylesheet has been imported, and the
+   auth screens render before that component is ever mounted. */
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.auth-field label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.auth-field .hint {
+  font-size: 12.5px;
+  color: var(--text-mute);
+  line-height: 1.45;
+}
+
+.auth-msg {
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 9px 12px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  word-break: break-word;
+}
+
+.auth-msg[data-tone="error"] {
+  color: var(--dead);
+  background: var(--dead-bg);
+  border-color: var(--dead);
+}
+
+.auth-msg[data-tone="ok"] {
+  color: var(--completed);
+  background: var(--completed-bg);
+  border-color: var(--completed);
+}

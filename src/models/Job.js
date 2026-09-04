@@ -9,6 +9,10 @@ const jobSchema = new mongoose.Schema(
       enum: ["pending", "claimed", "completed", "failed", "dead"],
       default: "pending",
     },
+    ownerId:{
+      type:mongoose.Schema.Types.ObjectId,
+      ref:'Users'
+    },
     attempts: { type: Number, default: 0 },
     runAt: { type: Date, default: Date.now },
     result: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -24,7 +28,6 @@ const jobSchema = new mongoose.Schema(
 jobSchema.index({ status: 1, priority: -1, createdAt: 1, runAt: 1 });
 
 jobSchema.index({ status: 1, _id: -1 });
-
 jobSchema.index(
   { idempotencyKey: 1 },
   {
@@ -32,5 +35,6 @@ jobSchema.index(
     partialFilterExpression: { idempotencyKey: { $type: "string" } },
   },
 );
+jobSchema.index({ownerId:1,_id:-1})
 jobSchema.index({ finishedAt: 1 }, { expireAfterSeconds: JOB_TTL_SECONDS });
 module.exports = mongoose.model("Job", jobSchema);

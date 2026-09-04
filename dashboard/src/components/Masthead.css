@@ -82,3 +82,39 @@
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
 }
+
+/* ---- actions ---------------------------------------------------------- */
+
+.masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* Deliberately quiet: signing out is not what anyone came here to do, so it
+   gets the same weight as the status pill beside it, not a filled button. */
+.signout {
+  appearance: none;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  padding: 4px 11px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: #d1d5db;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out),
+              transform 160ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .signout:hover {
+    color: var(--text-invert);
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.signout:active { transform: scale(0.97); }

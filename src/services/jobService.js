@@ -2,9 +2,10 @@ const Job = require("../models/Job.js");
 const config = require("../config")
 const mongoose = require("mongoose")
 
-async function jobStats() {
+async function jobStats(scope = {}) {
   const statuses = Job.schema.path("status").enumValues;
   const rows = await Job.aggregate([
+    { $match: scope },
     {
       $group: { _id: "$status", count: { $sum: 1 } },
     },
@@ -20,7 +21,7 @@ async function jobStats() {
   obj.total = Object.values(obj).reduce((n, c) => n + c, 0);
   return obj;
 }
-async function createJob({ type, payload, runAt, priority, idempotencyKey, traceId } = {}) {
+async function createJob({ type, payload, runAt, priority, idempotencyKey, traceId,ownerId } = {}) {
   const now = new Date();
   const isScheduled = Boolean(runAt) && runAt > now;
 
@@ -50,6 +51,7 @@ async function createJob({ type, payload, runAt, priority, idempotencyKey, trace
       priority,
       traceId,
       idempotencyKey,
+      ownerId,
     });
     return { job, created: true };
   } catch (err) {
@@ -59,9 +61,9 @@ async function createJob({ type, payload, runAt, priority, idempotencyKey, trace
     throw err;
   }
 }
-async function retryJob(id) {
+async function retryJob(id, scope = {}) {
   const job = await Job.findOneAndUpdate(
-    { _id: id, status: { $in: ["dead", "failed"] } },
+    { ...scope, _id: id, status: { $in: ["dead", "failed"] } },
     {
       $set: {
         status: "pending",
@@ -76,8 +78,8 @@ async function retryJob(id) {
   );
   return job;
 }
-async function cancelJob(id) {
-  return await Job.deleteOne({ _id: id, status: "pending" });
+async function cancelJob(id, scope = {}) {
+  return await Job.deleteOne({ ...scope, _id: id, status: "pending" });
 }
 async function listJobs(filter = {}, n = 50, cursor = null) {
   const query = cursor
@@ -96,8 +98,8 @@ async function listJobs(filter = {}, n = 50, cursor = null) {
 }
 
 
-async function getJob(id) {
-  return await Job.findById(id).lean();
+async function getJob(id, scope = {}) {
+  return await Job.findOne({ ...scope, _id: id }).lean();
 }
 
 module.exports = { createJob, listJobs, getJob, jobStats, retryJob, cancelJob };

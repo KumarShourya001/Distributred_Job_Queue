@@ -1,6 +1,6 @@
 import "./Masthead.css"
 
-export default function Masthead({ connected }) {
+export default function Masthead({ connected, onLogout }) {
   return (
     <header className="masthead">
       <div className="masthead-inner">
@@ -13,10 +13,18 @@ export default function Masthead({ connected }) {
           </p>
         </div>
 
-        <span className="conn" data-state={connected ? "live" : "down"} role="status">
-          <span className="dot" />
-          {connected ? "Live" : "Reconnecting"}
-        </span>
+        <div className="masthead-actions">
+          <span className="conn" data-state={connected ? "live" : "down"} role="status">
+            <span className="dot" />
+            {connected ? "Live" : "Reconnecting"}
+          </span>
+
+          {onLogout && (
+            <button type="button" className="signout" onClick={onLogout}>
+              Sign out
+            </button>
+          )}
+        </div>
       </div>
     </header>
   )

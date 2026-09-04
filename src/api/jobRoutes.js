@@ -11,6 +11,7 @@ const {
   cancelJob,
 } = require("../services/jobService");
 const  config = require("../config/index");
+const mongoose = require("mongoose");
 
 const jobTypes = Object.keys(handlers);
 const schema = z.object({
@@ -23,13 +24,19 @@ const schema = z.object({
 
 const listQuerySchema = z.object({
   status: z
-    .enum(["pending", "cursor","claimed", "completed", "failed", "dead"])
+    .enum(["pending", "claimed", "completed", "failed", "dead"])
     .optional(),
   limit: z.coerce.number().int().positive().max(100).default(50),
   cursor: z.string().regex(/^[0-9a-f]{24}$/i).optional(),
 });
+
+const ownerScope = (req) => {
+  if (req.isMachine) return {};
+  return { ownerId: new mongoose.Types.ObjectId(req.userId) };
+};
+
 router.get("/stats", async (req, res) => {
-  res.json(await jobStats());
+  res.json(await jobStats(ownerScope(req)));
 });
 router.get("/", async (req, res) => {
   const result = listQuerySchema.safeParse(req.query);
@@ -37,13 +44,13 @@ router.get("/", async (req, res) => {
     return res.status(400).json({ error: "invalid request query" });
   }
   const { status, limit, cursor } = result.data;
-  const filter = status ? { status } : {};
+  const filter = { ...ownerScope(req), ...(status ? { status } : {}) };
   const { jobs, nextCursor } = await listJobs(filter, limit, cursor);
   res.json({ jobs, nextCursor });
 });
 
 router.get("/:id", async (req, res) => {
-  const job = await getJob(req.params.id);
+  const job = await getJob(req.params.id, ownerScope(req));
   if (!job) {
     return res.status(404).json({ error: "job not found" });
   }
@@ -55,7 +62,7 @@ router.post("/", async (req, res) => {
   if (!result.success) {
     return res.status(400).json({ error: "invalid request body" });
   }
-  const { job, created,full } = await createJob({ ...result.data, traceId: req.traceId });
+  const { job, created,full } = await createJob({ ...result.data, traceId: req.traceId,ownerId:req.userId });
   if (full) {
     const scheduled = full === "scheduled";
     res.set("Retry-After", scheduled ? "300" : "30");
@@ -66,24 +73,24 @@ router.post("/", async (req, res) => {
   res.status(created ? 202 : 200).json({ id: job._id });
 });
 router.post("/:id/retry", async (req, res) => {
-  const job = await retryJob(req.params.id);
+  const job = await retryJob(req.params.id, ownerScope(req));
   if (job) {
     return res.json(job);
   }
-  const existing = await getJob(req.params.id);
+  const existing = await getJob(req.params.id, ownerScope(req));
   if (!existing) {
     return res.status(404).json({ error: "job not found" });
   }
   res.status(409).json({ error: `cannot retry a ${existing.status} job` });
 });
 router.delete("/:id", async (req, res) => {
-  const result = await cancelJob(req.params.id);
+  const result = await cancelJob(req.params.id, ownerScope(req));
 
   if (result.deletedCount) {
     return res.sendStatus(204);
   }
 
-  const existing = await getJob(req.params.id);
+  const existing = await getJob(req.params.id, ownerScope(req));
   if (!existing) {
     return res.status(404).json({ error: "job not found" });
   }

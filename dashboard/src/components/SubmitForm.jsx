@@ -5,7 +5,7 @@ import "./SubmitForm.css"
 // All state here is local to the form — nothing outside needs to know what's
 // typed in the textarea. The submitted job reaches the table over the
 // WebSocket, so this component never touches the shared job state.
-export default function SubmitForm() {
+export default function SubmitForm({ onSessionLost }) {
   const [type, setType] = useState(JOB_TYPES[0])
   const [payloadText, setPayloadText] = useState(`{
   "url": "https://webhook.site/YOUR-UNIQUE-ID",
@@ -33,7 +33,15 @@ export default function SubmitForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, payload }),
+        credentials: "include",
       })
+
+      // An expired session is not a form error — showing "Unauthorized" next to
+      // the button leaves someone retyping a payload that can never be accepted.
+      if (res.status === 401) {
+        onSessionLost()
+        return
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
