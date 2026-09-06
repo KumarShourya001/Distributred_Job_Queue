@@ -56,7 +56,7 @@ async function createJob({ type, payload, runAt, priority, idempotencyKey, trace
     return { job, created: true };
   } catch (err) {
     if (err.code == 11000 && idempotencyKey) {
-      return { job: await Job.findOne({ idempotencyKey }), created: false };
+      return { job: await Job.findOne({ ownerId,idempotencyKey }), created: false };
     }
     throw err;
   }

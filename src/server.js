@@ -6,12 +6,14 @@ const jobRoutes =require('./api/jobRoutes')
 const { initWebSocket, closeWebSocket } = require("./ws")
 const { watchJobChanges } = require("./changeStream")
 const http=require('http')
+const path=require("path")
 const { requireAuth } = require('./middleware/requireAuth')
 const {rateLimit}=require('./middleware/rateLimit')
 const {traceids}=require('./middleware/traceid')
 const authRoutes = require('./api/authRoutes')
 const app=express()
 const log = require("./loggers")
+const { handlers } = require("./worker/handlers")
 if (config.TRUST_PROXY !== false) app.set("trust proxy", config.TRUST_PROXY)
 let server=null
 let stream=null
@@ -44,12 +46,21 @@ const cors = (req, res, next) => {
     }
     next();
 };
+app.use(express.static(path.join(__dirname, "..", "dashboard", "dist"),{maxAge:"1y",immutable:true,index:false}))
 app.use(cors)
 // Body parsing is scoped to /jobs and runs after the guards, so an unauthenticated or
 // rate-limited request is never parsed. Any route added outside /jobs will see req.body
 // as undefined.
 app.use("/auth",rateLimit,express.json({limit:'16kb'}),authRoutes)
 app.use("/jobs", rateLimit, requireAuth, express.json({limit:"16kb"}), jobRoutes)
+
+app.get("/{*splat}",(req,res)=>{
+    res.set({
+      'Cache-Control': 'no-cache',
+    })
+    
+    res.sendFile(path.join(__dirname, "..", "dashboard", "dist", "index.html"))
+})
 app.use((err, req, res, next) => {
    if (err.name === "CastError") {
     return res.status(400).json({ error: "invalid id" })
