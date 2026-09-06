@@ -29,7 +29,7 @@ jobSchema.index({ status: 1, priority: -1, createdAt: 1, runAt: 1 });
 
 jobSchema.index({ status: 1, _id: -1 });
 jobSchema.index(
-  { idempotencyKey: 1 },
+  {ownerId:1,idempotencyKey: 1 },
   {
     unique: true,
     partialFilterExpression: { idempotencyKey: { $type: "string" } },

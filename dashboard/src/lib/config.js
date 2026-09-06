@@ -1,9 +1,11 @@
 // Vite inlines these at BUILD time, not runtime. Changing them on a host
 // requires a rebuild, not just a restart. Only VITE_-prefixed vars are exposed
 // to browser code, and everything exposed is public — never put a secret here.
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000"
-export const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000"
+export const API_URL = import.meta.env.VITE_API_URL ?? ""
 
+export const WS_URL =
+  import.meta.env.VITE_WS_URL ??
+  `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`
 // Mirrors the keys of the worker's handler registry. The API builds its Zod
 // enum from that same registry, so a type missing here is one the API rejects.
 export const JOB_TYPES = ["http_request"]

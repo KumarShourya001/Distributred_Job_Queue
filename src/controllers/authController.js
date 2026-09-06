@@ -5,7 +5,7 @@ const {sign,cookieOptions,SESSION_COOKIE}=require('../session')
 const email = z.string().trim().toLowerCase().email();
 
 const MIN_AGE_MS = 13 * 365.25 * 86400000;
-
+const DUMMY_HASH=bcrypt.hashSync("ITSNOTWHATITIS",10)
 const registerSchema = z.object({
   email,
   password: z.string().min(8).max(200),
@@ -80,6 +80,7 @@ const login = async (req, res) => {
       "+passwordHash",
     );
     if(!user){
+        await(bcrypt.compare(password,DUMMY_HASH))
         res.status(401).json({loggedIn:false,message:"invalid email or password"})
         return 
     }
