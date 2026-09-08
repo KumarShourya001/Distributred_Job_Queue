@@ -1,11 +1,16 @@
 # Distributed Job Queue
 
-A distributed job queue built on the MERN stack: jobs are submitted over an HTTP API,
-persisted in MongoDB, claimed and executed by independent worker processes, and streamed
-live to a React dashboard over WebSockets.
+**Live: [queue.kumarshourya.me](https://queue.kumarshourya.me)**
 
-MongoDB is the queue. There is no Redis, no RabbitMQ, no broker — the atomicity guarantees
-of a single `findOneAndUpdate` are what stop two workers from claiming the same job.
+A distributed job queue on the MERN stack. Jobs are submitted over an HTTP API, persisted in
+MongoDB, claimed and executed by independent worker processes, and streamed live to a React
+dashboard over WebSockets.
+
+MongoDB is the queue. No Redis, no RabbitMQ, no broker — the atomicity of a single
+`findOneAndUpdate` is what stops two workers claiming the same job.
+
+The deployment runs one API container and **three worker containers** on a single VM. They
+share no memory, no locks, and no messages; they coordinate entirely through the database.
 
 ---
 
@@ -13,43 +18,77 @@ of a single `findOneAndUpdate` are what stop two workers from claiming the same 
 
 ```mermaid
 flowchart LR
-    C[Client / curl] -->|POST /jobs| API[Express API<br/>src/server.js]
+    C[Browser / curl] -->|POST /jobs| CD[Caddy<br/>TLS termination]
+    CD --> API[Express API<br/>src/server.js]
     API --> DB[(MongoDB Atlas<br/>jobs collection)]
     W1[Worker 1] -->|findOneAndUpdate<br/>atomic claim| DB
-    W2[Worker N] -->|findOneAndUpdate<br/>atomic claim| DB
+    W2[Worker 2] -->|findOneAndUpdate<br/>atomic claim| DB
+    W3[Worker 3] -->|findOneAndUpdate<br/>atomic claim| DB
     SW[Sweeper] -->|reclaim stranded| DB
     DB -->|change stream| CS[watchJobChanges<br/>src/changeStream.js]
     CS --> WS[WebSocket server<br/>src/ws.js]
-    WS -->|live job events| UI[React dashboard<br/>dashboard/]
+    WS -->|events, filtered by owner| UI[React dashboard<br/>dashboard/]
 ```
 
 ### Request flow
 
-1. `POST /jobs` → Zod validates the body → `createJob()` inserts a document with
-   `status: "pending"` → API returns `202 Accepted` with the job id.
-   The API never runs the work; it only records the intent.
-2. A worker polls every second. `Job.findOneAndUpdate({ status: "pending" }, { status: "claimed" })`
-   is a single atomic operation, so exactly one worker wins each job even with many running.
-3. The worker executes the job. On success → `completed`. On failure → `attempts += 1`,
-   back to `pending` for a retry, or to `dead` once `MAX_ATTEMPTS` (3) is exhausted.
-4. If a worker crashes mid-job the document is stuck in `claimed`. The sweeper runs every
-   5 seconds and returns anything claimed for more than 30 seconds back to `pending`.
-5. Every write to the collection fires a MongoDB change stream event, which is broadcast
-   to all connected dashboard clients over WebSocket.
+1. `POST /jobs` → session or API-key auth → rate limit → Zod validation → `createJob()`
+   inserts a document with `status: "pending"` and the caller's `ownerId` → `202 Accepted`.
+   The API never runs the work; it records the intent.
+2. A worker polls each second. `findOneAndUpdate({ status: "pending", runAt: { $lte: now } },
+   { status: "claimed", claimedAt: now })` is one atomic operation, so exactly one claimer wins
+   each job no matter how many are running.
+3. `claimedAt` doubles as a **fencing token**. Every later write matches on it, so a worker
+   that lost its lease mid-job cannot overwrite the result of the worker that took over.
+4. On success → `completed`. On a transient error → `attempts += 1` and back to `pending` with
+   exponential backoff and jitter. On a `PermanentError` → straight to `failed`, no retries.
+   After `MAX_ATTEMPTS` (3) → `dead`.
+5. A crashed worker leaves its job in `claimed`. The sweeper runs every 5s and returns anything
+   claimed longer than `LEASE_MS` back to `pending`.
+6. Every write fires a change stream event, filtered by `ownerId` and pushed to that user's
+   dashboard over WebSocket.
 
 ### Job state machine
 
 ```
-                 ┌──────────────── retry (attempts < 3) ─────────────┐
+                 ┌──────────── retry, backoff (attempts < 3) ────────┐
                  │                                                   │
    [new] ──► pending ──► claimed ──► completed                       │
                  ▲          │                                        │
-                 │          └──► (error) ──────────────────────────► ┘
-                 │                    │
-                 │                    └──► dead   (attempts >= 3)
+                 │          ├──► (transient error) ────────────────► ┘
+                 │          │
+                 │          ├──► (PermanentError) ──► failed
+                 │          │
+                 │          └──► (attempts >= 3) ───► dead
                  │
-                 └──── sweeper reclaims after 30s stranded ──── claimed
+                 └──── sweeper reclaims after LEASE_MS stranded ──── claimed
 ```
+
+`failed` and `dead` are different on purpose. `failed` means *this will never work* — a blocked
+URL, an unknown job type. `dead` means *we tried three times and gave up*. Only `dead` and
+`failed` jobs can be retried from the API.
+
+---
+
+## What it does
+
+| | |
+|---|---|
+| **Atomic claiming** | One `findOneAndUpdate`. Verified against a naive find-then-save, which produced 8 winners for one job where this produces 1 |
+| **Fencing tokens** | `claimedAt` is matched on every conditional write, so a lost lease cannot corrupt a result |
+| **Retry with backoff** | Exponential with jitter, capped, three attempts, then dead-letter |
+| **Permanent vs transient** | `PermanentError` skips retries entirely |
+| **Lease recovery** | Sweeper reclaims jobs from dead workers |
+| **Scheduling** | `runAt` for future execution, with a configurable ceiling |
+| **Priority** | `-10` to `10`, highest first |
+| **Idempotency** | `idempotencyKey`, unique **per owner** |
+| **Multi-user** | Session auth, per-user job isolation on every read path |
+| **Live updates** | Change streams → WebSocket, filtered per user, resumable across reconnects |
+| **SSRF protection** | Outbound URLs resolved and checked against loopback, private, link-local and IPv4-mapped ranges; redirects refused |
+| **Rate limiting** | Token bucket per IP, ahead of auth |
+| **Backpressure** | Separate caps on runnable and scheduled jobs, `503` with `Retry-After` |
+| **Retention** | TTL index on `finishedAt`, 3 days |
+| **Observability** | Structured JSON logs, `traceId` threaded from the HTTP request into worker logs |
 
 ---
 
@@ -57,160 +96,184 @@ flowchart LR
 
 | Path | What it does |
 |---|---|
-| `src/config/index.js` | Loads `.env`, exposes `mongoUri` and `port`, fails fast if `MONGO_URI` is missing |
-| `src/models/Job.js` | Mongoose schema: `type`, `payload`, `status`, `attempts`, `result`, `claimedAt`, timestamps. Indexed on `{ status, createdAt }` so the claim query is cheap |
-| `src/server.js` | Connects to Mongo, mounts the API, starts the HTTP + WebSocket server and the change stream |
-| `src/api/jobRoutes.js` | `POST /jobs` — Zod validation, returns `202` with the new job id |
-| `src/services/jobService.js` | `createJob(type, payload)` — the only place that writes new jobs |
-| `src/worker/worker.js` | Polling loop: atomic claim → execute → complete / retry / dead-letter |
-| `src/worker/sweeper.js` | Reclaims jobs stranded in `claimed` by a dead worker |
-| `src/changeStream.js` | Watches the `jobs` collection and forwards every change |
-| `src/ws.js` | WebSocket server + `broadcast()` to all connected dashboards |
-| `dashboard/` | Vite + React 19 UI: live status counters and a job table |
-| `Dockerfile.server` / `Dockerfile.worker` | Two images from the same source tree, different entrypoints |
-| `DEBUG.md` | Debug journal — every error hit during the build and how it was resolved |
+| `src/config/index.js` | Loads `.env`, validates, fails fast on missing `MONGO_URI` / `JWT_SECRET` / `API_KEY` |
+| `src/models/Job.js` | Job schema plus five indexes — the claim, the filtered list, per-owner idempotency, per-owner listing, and the TTL |
+| `src/models/User.js` | Email, name, dob, bcrypt hash (`select: false`) |
+| `src/server.js` | Mongo, Express, WebSocket, change stream, static dashboard, graceful shutdown |
+| `src/api/jobRoutes.js` | Six job routes, Zod-validated, every read owner-scoped |
+| `src/api/authRoutes.js` | Register, login, logout |
+| `src/controllers/authController.js` | bcrypt, enumeration-safe responses, constant-time login |
+| `src/session.js` | JWT sign/verify, httpOnly cookie options |
+| `src/middleware/` | `requireAuth`, `requireSession`, API-key check, token-bucket rate limit, trace ids |
+| `src/services/jobService.js` | Every write and scoped read of the jobs collection |
+| `src/worker/worker.js` | Claim → execute → complete / retry / dead-letter, with heartbeat and fencing |
+| `src/worker/handlers.js` | The handler registry — what a job `type` maps to |
+| `src/worker/safeUrl.js` | SSRF guard |
+| `src/worker/sweeper.js` | Reclaims stranded jobs |
+| `src/changeStream.js` | Watches the collection, resumes with a stored token |
+| `src/ws.js` | WebSocket server, origin check, session auth, per-owner broadcast |
+| `dashboard/` | Vite + React UI — login, signup, submit form, live table |
+| `test/` | 124 tests across 13 files |
+| `scripts/purge.js` | Dry-run-by-default bulk delete |
+| `DEBUG.md` | Debug journal — every non-obvious failure hit during the build and what it taught |
 
 ---
 
 ## Setup
 
-### 1. Prerequisites
+### Prerequisites
 
-See [requirements.txt](requirements.txt). Short version: Node.js 20+, a MongoDB **replica set**
-(MongoDB Atlas free tier is fine — change streams do not work on a standalone `mongod`).
+Node.js 20+, and a MongoDB **replica set** — Atlas free tier is fine. Change streams do not
+work on a standalone `mongod`.
 
-### 2. Environment
+### Environment
 
-Create a `.env` in the repo root:
+Copy `.env.example` to `.env` and fill it in. The server refuses to start without
+`MONGO_URI`, `JWT_SECRET` and `API_KEY`.
 
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
-MONGO_URI=mongodb://<user>:<pass>@<host>:27017/jobqueue?authSource=admin
-PORT=3000
-```
 
-> **Note on `+srv`:** if you are on a network that blocks or intercepts DNS (many campus
-> networks do), the `mongodb+srv://` form fails with `querySrv ECONNREFUSED`. Use the
-> non-SRV form with the shard hostnames listed explicitly. This is documented in `DEBUG.md`.
+Generates a value suitable for both secrets.
 
-### 3. Install and run
+> **On `+srv`:** if your network blocks or intercepts DNS SRV lookups (many campus networks
+> do), `mongodb+srv://` fails with `querySrv ECONNREFUSED`. Use the non-SRV form with shard
+> hostnames listed explicitly.
+
+### Run it
 
 ```bash
 npm install
-node src/server.js      # terminal 1 — API + WebSocket on :3000
-node src/worker/worker.js   # terminal 2 — worker (run as many as you like)
+npm start                    # API + WebSocket on :3000
+npm run worker               # worker — run as many as you like
 ```
 
 ```bash
-cd dashboard
-npm install
-npm run dev             # terminal 3 — dashboard on :5173
+cd dashboard && npm install && npm run dev    # dashboard on :5173
 ```
 
-### 4. Submit a job
+### Tests
 
 ```bash
-curl -X POST http://localhost:3000/jobs -H "Content-Type: application/json" -d '{"type":"send_email","payload":{"to":"a@b.com"}}'
+npm test
 ```
 
-PowerShell aliases `curl` to `Invoke-WebRequest`, which takes different flags:
+124 tests. They spawn real server and worker processes against `MONGO_URI_TEST` and assert on
+effects — a job written, read back, and compared — rather than on return values. Nearly every
+bug this project hit was a silent no-op, so a test that only checks "it didn't throw" would
+have missed all of them.
 
-```powershell
-Invoke-RestMethod -Uri http://localhost:3000/jobs -Method Post -ContentType "application/json" -Body '{"type":"send_email","payload":{"to":"a@b.com"}}'
-```
+`--test-concurrency=1` is deliberate: files run serially because several wipe the collection.
 
-To watch the retry and dead-letter path, submit a job that is designed to fail:
+---
+
+## API
+
+All `/jobs` routes require authentication — either a session cookie or `X-API-Key`.
+A session sees only its own jobs; the API key is an operator credential and sees everything.
+
+### Auth
+
+| Route | Notes |
+|---|---|
+| `POST /auth/register` | `{ email, password, name, dob }`. Answers identically whether or not the email was taken |
+| `POST /auth/login` | Sets an httpOnly session cookie. Constant-time regardless of whether the account exists |
+| `POST /auth/logout` | Clears the cookie |
+
+### Jobs
+
+| Route | Notes |
+|---|---|
+| `POST /jobs` | `{ type, payload, runAt?, priority?, idempotencyKey? }` → `202 { id }` |
+| `GET /jobs` | `?status=&limit=&cursor=` — keyset pagination on `_id`, newest first |
+| `GET /jobs/stats` | Per-status counts plus a total |
+| `GET /jobs/:id` | `404` if it isn't yours |
+| `POST /jobs/:id/retry` | Only `dead` and `failed`. `404` if it isn't yours |
+| `DELETE /jobs/:id` | Only `pending`. `404` if it isn't yours |
+
+`404` rather than `403` is deliberate: a `403` confirms the id exists.
+
+| Status | Meaning |
+|---|---|
+| `202` | Queued |
+| `200` | Idempotency key already seen — same job returned |
+| `400` | Failed validation |
+| `401` | No valid session or API key |
+| `409` | Wrong state for the operation |
+| `413` | Body over 16 KB |
+| `429` | Rate limited |
+| `503` | Queue full — `Retry-After` set |
+
+### Job types
+
+| `type` | Payload | What it does |
+|---|---|---|
+| `http_request` | `{ url, body }` | POSTs JSON to a public URL. SSRF-guarded, redirects refused, 10s timeout |
+| `sleep` | `{ ms }` | Waits, capped at 120s |
+| `fail` | `{ message? }` | Always throws — for exercising retries |
 
 ```bash
-curl -X POST http://localhost:3000/jobs -H "Content-Type: application/json" -d '{"type":"send_email","payload":{"shouldFail":true}}'
+curl -X POST https://queue.kumarshourya.me/jobs \
+  -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" \
+  -d '{"type":"http_request","payload":{"url":"https://webhook.site/YOUR-ID","body":{"hello":"world"}}}'
 ```
 
 ---
 
 ## Docker
 
-### The whole stack in one command
-
 ```bash
 docker compose up --build --scale worker=3
 ```
 
-That starts the API plus three independent workers. Submit a burst of jobs and watch
-them spread across all three — each job runs exactly once, with no coordination between
-the workers. The atomic claim is the only thing preventing duplicate execution.
+One API, three independent workers. Submit a burst and watch the work spread — each job runs
+exactly once with no coordination between them.
 
-Verified run: 15 jobs submitted at once across 3 workers produced 12 completed,
-3 dead-lettered after 3 attempts each, 6 retries, and zero duplicate executions.
-
-```bash
-docker compose logs -f worker    # follow all workers
-docker compose ps                # health + status
-docker compose down              # tear down
-```
-
-Config comes from your local `.env` at run time via `env_file`. Nothing is baked into
-the image — verified: there is no `.env` anywhere inside the built images, and they run
-as the non-root `node` user.
-
-### Building the images individually
+**Verified on the live deployment:** 6 jobs produced 12 claims split 5 / 4 / 3 across three
+worker containers, and individual jobs' retries migrated between containers — attempt 1 on
+worker-3, attempt 3 on worker-1. Under load, 1000 jobs across 40 concurrent claimers: 850
+completed with each URL hit exactly once, 100 dead with each hit exactly three times, zero
+stranded, zero double-runs.
 
 ```bash
-docker build -f Dockerfile.server -t jobq-server .
-docker build -f Dockerfile.worker -t jobq-worker .
-
-docker run -p 3000:3000 -e MONGO_URI="<your-uri>" jobq-server
-docker run -e MONGO_URI="<your-uri>" jobq-worker
+docker compose logs -f worker
+docker compose ps
+docker compose down
 ```
+
+Config comes from your local `.env` at run time. Nothing is baked into the images, and they
+run as the non-root `node` user.
 
 ### If Mongo won't connect from inside a container
 
-`getaddrinfo EAI_AGAIN` means DNS failed *inside* the container. Containers do not
-inherit the host's DNS settings — Docker Desktop resolves through its WSL2 VM, whose
-resolver is often stale, so Atlas lookups fail even when the host resolves them fine.
-The compose file pins `8.8.8.8` / `1.1.1.1` on both services to make this deterministic.
+`getaddrinfo EAI_AGAIN` means DNS failed *inside* the container. Containers don't inherit the
+host's DNS — Docker Desktop resolves through its WSL2 VM, whose resolver is often stale. The
+compose file pins `8.8.8.8` / `1.1.1.1` on both services.
 
 ---
 
-## API
+## Deployment
 
-### `POST /jobs`
+Running on an Azure VM (2 vCPU, 1 GB) in Central India, next to the Atlas cluster in Mumbai.
+Caddy terminates TLS with an automatically renewed Let's Encrypt certificate and proxies to
+the API; the API container isn't published to the host at all.
 
-```json
-{ "type": "send_email", "payload": { "to": "a@b.com" } }
-```
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `type` | string | yes | Non-empty. Identifies what work to do |
-| `payload` | object | no | Defaults to `{}`. Arbitrary job input |
-
-| Status | Meaning |
-|---|---|
-| `202 Accepted` | Job queued. Body: `{ "id": "<job id>" }` |
-| `400 Bad Request` | Body failed Zod validation |
-| `500` | Unhandled error (Express 5 forwards rejected async handlers to the error middleware) |
+Express serves `dashboard/dist` from the same origin, which is what lets the session cookie
+stay `SameSite=Lax` instead of needing the third-party-cookie treatment browsers are phasing
+out. Hashed bundles are cached for a year; API responses are `no-store`.
 
 ---
 
-## Current limitations
+## Known limitations
 
-Known and deliberate — this is a learning project built in stages.
-
-- **Read API is missing.** There is no `GET /jobs` or `GET /jobs/:id`. The dashboard only
-  sees jobs that change *while it is connected*; it has no initial load and loses all state
-  on refresh.
-- **No authentication** on the API or the WebSocket.
-- **Retries have no backoff.** A failing job is retried on the very next tick.
-- **`failed` is in the status enum but never used** — failures go straight to `pending` or `dead`.
-- **Fixed 1-second poll interval**, no long-polling or push to workers.
-- **Single change stream** — it is not resumable, so events during a server restart are lost.
-- **No tests.**
-
-## Roadmap
-
-- `GET /jobs` + `GET /jobs/:id`, and a dashboard that loads existing state on mount
-- Exponential backoff between retries
-- Manual requeue of dead-lettered jobs from the dashboard
-- Resumable change stream (persist the resume token)
-- Rate limiting, request logging, graceful shutdown
-- `docker compose` for the whole stack
-- Integration tests against a throwaway Mongo instance
+- **`http_request` is POST-only with no custom headers**, so authenticated APIs are out of
+  reach. Adding `method` and `headers` also means redacting them from logs and from
+  `GET /jobs/:id` — headers carry secrets.
+- **Atlas free tier caps throughput** at ~100 ops/sec and 500 connections. That, not the
+  worker count, is the ceiling — past about four workers you buy throttling, not throughput.
+- **No revocation on logout.** The JWT stays valid until it expires; clearing the cookie is
+  all logout does. Live WebSockets do close at the token's `exp`.
+- **DNS rebinding (TOCTOU)** in the SSRF guard: the address is resolved for validation and
+  again by `fetch`, so a hostile resolver could answer differently each time.
+- **No CI/CD.** Deploying is `git pull` and a compose restart on the VM.

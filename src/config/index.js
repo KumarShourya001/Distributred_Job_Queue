@@ -15,6 +15,10 @@ const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const RATE_BURST = Number(process.env.RATE_BURST) || 20;
 const RATE_REFILL_PER_SEC = Number(process.env.RATE_REFILL_PER_SEC) || 2;
 const MAX_SCHEDULED = Number(process.env.MAX_SCHEDULED || 5000);
+const LEASE_MS = Number(process.env.LEASE_MS) || 30000;
+const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS) || 3;
+const MONGO_POOL_SIZE = Number(process.env.MONGO_POOL_SIZE) || 20;
+const MAX_SOCKETS_PER_USER = Number(process.env.MAX_SOCKETS_PER_USER) || 5;
 const MAX_RUNAT_DAYS = Number(process.env.MAX_RUNAT_DAYS || 3);
 const TRUST_PROXY = process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) : false;
 const JWT_SECRET = process.env.JWT_SECRET || null;
@@ -44,6 +48,10 @@ module.exports = {
   MAX_QUEUE_DEPTH,
   MAX_RUNAT_DAYS,
   MAX_SCHEDULED,
+  LEASE_MS,
+  MAX_ATTEMPTS,
+  MONGO_POOL_SIZE,
+  MAX_SOCKETS_PER_USER,
   TRUST_PROXY,
   JWT_SECRET,
   SESSION_TTL,

@@ -1258,3 +1258,261 @@ res.header('Cache-Control', 'no-store');
 
 Verified against a live server: present on `/auth/login`, `/jobs`, `/jobs/stats` and on a 401,
 absent on `/health` - which is registered before the middleware and needs no protection.
+
+---
+
+## 25. Four of five paths worked, so nothing looked broken
+
+**Symptom**
+Every user's `/jobs/stats` returned zero for every status. `GET /jobs`, `GET /jobs/:id`,
+retry and cancel all isolated correctly for the same user in the same request.
+
+**Context**
+Adding `ownerId` meant scoping five read paths. Each one takes a `scope` object built by one
+helper:
+
+```js
+const ownerScope = (req) => {
+  if (req.isMachine) return {};
+  return { ownerId: req.userId };
+};
+```
+
+`req.userId` comes from the JWT's `sub` claim, which is a **string**.
+
+**Actually**
+Mongoose casts query values against the schema. `find()`, `findOne()`, `deleteOne()` and
+`findOneAndUpdate()` all saw `ownerId: "6a9c..."`, consulted the schema, and turned it into
+an ObjectId.
+
+**`aggregate()` does not.** A pipeline is passed to MongoDB verbatim - Mongoose has no schema
+context inside a `$match` stage. So the string was compared against ObjectIds and matched
+nothing, ever.
+
+```
+find()     with a string ownerId : 1   <- cast against the schema
+aggregate  with a string ownerId : 0   <- sent as-is
+```
+
+Fixed by casting once in the helper, so every consumer gets an ObjectId regardless of what it
+does with it.
+
+**Concept**
+The dangerous shape here is not "it broke". It is **four of five call sites working**. A bug
+that breaks everything gets found in the first minute. A bug that breaks one path out of five,
+silently, returning a plausible zero rather than an error, survives a spot check - and the
+path it broke was the one nobody looks at twice, because a dashboard showing zeros looks like
+an empty database.
+
+The lesson generalises past Mongoose: **an abstraction that helpfully converts your input is
+an abstraction you will trip over the moment you step outside it.** The cast was never
+something the code asked for; it was something the ORM did quietly, everywhere except one
+place.
+
+---
+
+## 26. Fixing the code turned a data leak into an outage
+
+**Symptom**
+A confirmed cross-tenant leak, found by running it. Alice creates a job with
+`idempotencyKey: "K"`. Bob posts the same key and gets back **Alice's job document and its
+`_id`**, while Bob's own job is silently never created.
+
+Two problems in one: information disclosure, and a denial primitive - squat the keys and the
+victim's submissions vanish.
+
+**The cause**
+The unique index was global:
+
+```js
+jobSchema.index({ idempotencyKey: 1 }, { unique: true, ... })
+```
+
+so Bob's insert violated it, and the catch handler looked the key up with no owner scope:
+
+```js
+if (err.code == 11000 && idempotencyKey) {
+  return { job: await Job.findOne({ idempotencyKey }), created: false };
+}
+```
+
+The fix is a compound unique index on `{ ownerId, idempotencyKey }` and an owner-scoped
+lookup.
+
+**Actually - and this is the part worth remembering**
+Deploying the code fix **on its own makes it worse.** Proven by recreating the old index and
+re-running:
+
+```
+with the old index still present:
+  2. bob posts K : 500          <- not a leak any more. an outage.
+```
+
+Because: Bob's insert still violates the **old global** index, the catch runs the now-scoped
+`findOne`, finds nothing (the job is Alice's), returns `{ job: null }`, and the route does
+`res.json({ id: job._id })` on `null`.
+
+And Mongoose will not save you. `autoIndex` **creates** the new index on connect but never
+**drops** the old one - so an app that simply starts up ends up holding both, which is exactly
+the broken state.
+
+`Job.syncIndexes()` on every database is the actual fix. Checked for duplicate
+`(ownerId, idempotencyKey)` pairs first: `syncIndexes` drops before it builds, so a duplicate
+would leave the collection with **no** uniqueness constraint at all.
+
+**Concept**
+A schema change is not a code change. The code and the data have to move together, and
+between the two there is a window where the system is in a state neither version anticipated -
+here, worse than either. The question to ask of any index change is not "is the new index
+right" but **"what happens to a request that arrives while both indexes exist?"**
+
+---
+
+## 27. A vulnerability with no visible symptom
+
+**Symptom**
+None. Every response was already identical - same status, same body, deliberately so:
+
+```
+wrong password     -> 401 {"loggedIn":false,"message":"invalid email or password"}
+unknown email      -> 401 {"loggedIn":false,"message":"invalid email or password"}
+```
+
+That anti-enumeration work was correct and tested. The bodies really were the same.
+
+**Actually**
+The **clock** leaked what the body did not.
+
+```js
+const user = await User.findOne({ Email: email }).select("+passwordHash");
+if (!user) {
+    res.status(401).json({ loggedIn: false, message: "invalid email or password" });
+    return;                                   // <- returns before any bcrypt
+}
+const isMatch = await validatePassword(password, user.passwordHash);
+```
+
+A registered email pays for one bcrypt comparison. An unknown one returns immediately.
+Measured over 20 requests each:
+
+```
+                    median      min      max
+email registered    87.9ms   80.3ms  148.5ms
+email unknown       44.1ms   40.6ms   318.1ms
+
+gap: 43.8ms
+```
+
+About one bcrypt round at cost 10, and trivially measurable across a network. Anyone can
+enumerate which emails are registered.
+
+Fixed by comparing against a dummy hash on the not-found path and throwing the result away,
+so both branches cost the same:
+
+```
+email registered    92.3ms   88.2ms
+email unknown      101.2ms   87.7ms
+
+gap: -9.0ms  -> noise
+```
+
+The `min` column is the honest one - medians still carry network jitter to Atlas, but the
+fastest observed run is the closest thing to a clean measurement. 88.2 vs 87.7ms.
+
+**Concept**
+Two things.
+
+First, **response equality is not indistinguishability.** Anything an attacker can observe is
+part of the response, and time is observable. The anti-enumeration work was half a defence
+that looked like a whole one.
+
+Second, this class of bug is **invisible to every functional test that could ever be written.**
+The status codes match, the bodies match, the behaviour is correct by every assertion in the
+suite. The only instrument that finds it is a stopwatch, and the only way to know the fix
+worked is to measure again - which is why the mutation check mattered: reverting the fix put
+the 43.8ms gap straight back.
+
+---
+
+## 28. Four bugs in twenty lines, none of which a linter would catch
+
+**Context**
+Rewriting `ws.js` to authenticate the WebSocket handshake: `noServer: true`, a manual
+`upgrade` handler checking Origin and the session cookie, and a timer that closes the socket
+when the token expires. Twenty lines. Four separate failures, each with a different flavour.
+
+**1. `requiee` - loud and instant**
+
+```
+ReferenceError: requiee is not defined
+    at Object.<anonymous> (src/ws.js:2:14)
+```
+
+The good kind. It killed the whole app at import, which is exactly what a typo should do.
+
+**2. `header` vs `head` - silent until someone connects**
+
+The handler was declared `(req, socket, header)` and its body used `head`. It parses. It
+loads. `node -e "require('./src/ws.js')"` prints nothing wrong. The `ReferenceError` fires
+only at the moment a client actually tries to upgrade.
+
+**3. `payload is not defined` - and the handshake succeeded anyway**
+
+```js
+const userId = readSessionPayload(req)   // named userId, holds the payload
+...
+ws.userId = payload.sub                  // payload was never declared
+```
+
+The variable was renamed at one end and not the other, and the old name still read fine at
+the call site. What made it interesting is the failure mode:
+
+```
+client: socket OPENED
+client: closed 1006
+server still alive: false
+```
+
+`handleUpgrade` completes the HTTP 101 **before** invoking the callback, so the client sees a
+successful connection and then the server process dies. A test asserting "the socket
+connected" passes. Three tests asserting "a job event arrives" fail, and the reason they fail
+is that the API is no longer running.
+
+**4. `ws.close(40001)` - a bug with a seven-day fuse**
+
+An extra zero. Valid application close codes stop at 4999 (`ws/lib/validation.js:37`), so
+`close()` throws instead of closing, no frame is sent, and the client reports **1006 -
+abnormal closure**. The symptom is a connection that simply vanishes with nothing in the logs
+pointing at a close code.
+
+It sits on the one line no test reaches, because the timer is armed at handshake and fires
+days later. Made testable by signing a token with a two-second TTL: valid on connect, expired
+immediately after.
+
+```
+with 40001:  actual: 1006, expected: 4001   FAIL
+with  4001:  pass
+```
+
+**And a fifth, in the route that served the page**
+
+`app.get("/*splat", ...)` for the SPA fallback. Express 5 rejects a bare `"*"`, so `/*splat`
+looked like the fix, and it compiles. It also does not match `/`:
+
+```
+"/*splat"    / -> 404   /anything -> 200   /a/b/c -> 200
+"/{*splat}"  / -> 200   /anything -> 200   /a/b/c -> 200
+```
+
+`*splat` requires at least one segment; the braces make the group optional. Every deep link
+worked and the home page 404'd - the single URL everybody visits first.
+
+**Concept**
+These four failed at four different moments: import, first connection, first *successful*
+connection, and seven days later. That range is the point. "It starts" tells you almost
+nothing; "it connected" told us the opposite of the truth.
+
+The general defence is not care. It is **arranging for each thing to be observable at the
+moment you can still act on it** - a test that asserts a job arrives, not that a socket
+opened; a token with a two-second life so a seven-day timer runs now; a pattern checked
+against `/` and not merely compiled.

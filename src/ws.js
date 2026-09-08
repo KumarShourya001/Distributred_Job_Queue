@@ -20,6 +20,13 @@ function initWebSocket(server) {
             socket.destroy()
             return
         }
+        let open=0
+        for(const c of wss.clients){ if(c.userId===payload.sub) open++ }
+        if(open>=config.MAX_SOCKETS_PER_USER){
+            socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n")
+            socket.destroy()
+            return
+        }
         wss.handleUpgrade(req,socket,head,(ws)=>{
             ws.userId=payload.sub
             const timer=setTimeout(()=>ws.close(4001,'session expired'),Math.min(payload.exp*1000-Date.now(),2147483647))
