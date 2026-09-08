@@ -13,7 +13,6 @@ const {traceids}=require('./middleware/traceid')
 const authRoutes = require('./api/authRoutes')
 const app=express()
 const log = require("./loggers")
-const { handlers } = require("./worker/handlers")
 if (config.TRUST_PROXY !== false) app.set("trust proxy", config.TRUST_PROXY)
 let server=null
 let stream=null
@@ -75,7 +74,7 @@ app.use((err, req, res, next) => {
 })
 async function main() {
   log.info("connecting to mongo")
-  await mongoose.connect(config.mongoUri)
+  await mongoose.connect(config.mongoUri, { maxPoolSize: config.MONGO_POOL_SIZE })
   log.info("mongo connected")
   
   server = http.createServer(app) 
@@ -98,7 +97,7 @@ async function shutdown(signal) {
 
   },10000)
   force.unref()
-  const closed=new Promise((resolve)=>server.close(resolve))
+  const closed=server?new Promise((resolve)=>server.close(resolve)):Promise.resolve()
   closeWebSocket()
   await closed
   if(stream)await stream.close()

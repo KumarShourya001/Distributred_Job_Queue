@@ -32,8 +32,20 @@ At least one filter is required, so a bare run can never wipe the collection.
   }
 
   const filter = {}
+  const STATUSES = ["pending", "claimed", "completed", "failed", "dead"]
   const status = value("status")
-  if (status) filter.status = status
+  if (status) {
+    if (!STATUSES.includes(status)) {
+      console.error(`--status must be one of: ${STATUSES.join(", ")}`)
+      process.exit(1)
+    }
+    filter.status = status
+  }
+
+  if (flag("scheduled") && flag("due")) {
+    console.error("--scheduled and --due are mutually exclusive")
+    process.exit(1)
+  }
   if (flag("scheduled")) filter.runAt = { $gt: new Date() }
   if (flag("due")) filter.runAt = { $lte: new Date() }
 

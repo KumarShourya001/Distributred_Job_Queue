@@ -11,7 +11,7 @@ const CONCURRENCY = Number(process.env.CONCURRENCY) || 1
 const log = require("../loggers")
 let shuttingDown=false
 let sweepTimer=null
-const MAX_ATTEMPTS=3
+const MAX_ATTEMPTS=config.MAX_ATTEMPTS
 function backoffMs(attempts) {
     let d=BASE_DELAY_MS*2**attempts
     d=Math.min(d,6000)
@@ -118,7 +118,7 @@ async function loop() {
 }
 
 async function main() {
-    await mongoose.connect(config.mongoUri)
+    await mongoose.connect(config.mongoUri, { maxPoolSize: config.MONGO_POOL_SIZE })
     log.info("worker up", { concurrency: CONCURRENCY })
     sweepTimer=setInterval(sweep,5000)
     loop()

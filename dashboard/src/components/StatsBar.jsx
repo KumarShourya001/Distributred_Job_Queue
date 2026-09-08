@@ -1,12 +1,14 @@
 import "./StatsBar.css"
 
-// `failed` is in the Job enum but the worker never writes it — a failure goes
-// straight back to pending or on to dead. A permanently-zero counter would be
-// noise, so it isn't here.
+// One card per status in the Job enum. `failed` and `dead` are different things:
+// `failed` is permanent — a blocked URL or an unknown job type, refused on the
+// first attempt. `dead` means three attempts were spent. Leaving `failed` out
+// meant those jobs showed in the table and in no counter.
 const CARDS = [
   { status: "pending",   label: "Pending",   color: "var(--pending)" },
   { status: "claimed",   label: "Claimed",   color: "var(--claimed)" },
   { status: "completed", label: "Completed", color: "var(--completed)" },
+  { status: "failed",    label: "Failed",    color: "var(--failed)" },
   { status: "dead",      label: "Dead",      color: "var(--dead)" },
 ]
 

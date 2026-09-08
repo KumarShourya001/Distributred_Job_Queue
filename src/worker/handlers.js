@@ -30,8 +30,8 @@ async function sleepJob(payload) {
     if (!Number.isFinite(ms) || ms < 0) {
         throw new PermanentError("sleep needs a non-negative ms in the payload")
     }
-    if (ms > 120000) {
-        throw new PermanentError("sleep ms is capped at 120000")
+    if (ms > 30000) {
+        throw new PermanentError("sleep ms is capped at 30000")
     }
 
     await new Promise((resolve) => setTimeout(resolve, ms))
