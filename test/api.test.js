@@ -127,10 +127,11 @@ test("a 401 still carries CORS headers", async () => {
 })
 
 test("a burst beyond the bucket capacity is rejected with 429", async () => {
-  const codes = []
-  for (let i = 0; i < LIMIT_BURST + 6; i++) {
-    codes.push((await get(LIMIT_PORT, "/jobs", { "X-API-Key": KEY })).status)
-  }
+  // Fired concurrently, not in a loop: on a slow network sequential requests take long
+  // enough that the bucket refills mid-burst and nothing is ever rejected.
+  const codes = (await Promise.all(
+    Array.from({ length: LIMIT_BURST + 6 }, () => get(LIMIT_PORT, "/jobs", { "X-API-Key": KEY }))
+  )).map((r) => r.status)
 
   assert.ok(codes.includes(429), `expected a 429 in ${codes.join(",")}`)
   const allowed = codes.filter((c) => c === 200).length

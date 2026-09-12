@@ -1,11 +1,11 @@
 .about {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: 12px;
 }
 
 @media (max-width: 800px) {
-  .about { grid-template-columns: 1fr; gap: 12px; }
+  .about { grid-template-columns: 1fr; }
 }
 
 .about > div {
@@ -17,9 +17,7 @@
 
 .about h3 {
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
   color: var(--text-mute);
   margin-bottom: 6px;
 }
@@ -39,5 +37,5 @@
 
 .about .dead-word {
   color: var(--dead);
-  font-weight: 600;
+  font-weight: 500;
 }

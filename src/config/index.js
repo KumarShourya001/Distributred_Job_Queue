@@ -19,6 +19,8 @@ const LEASE_MS = Number(process.env.LEASE_MS) || 30000;
 const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS) || 3;
 const MONGO_POOL_SIZE = Number(process.env.MONGO_POOL_SIZE) || 20;
 const MAX_SOCKETS_PER_USER = Number(process.env.MAX_SOCKETS_PER_USER) || 5;
+const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
+const MAIL_FROM = process.env.MAIL_FROM || null;
 const MAX_RUNAT_DAYS = Number(process.env.MAX_RUNAT_DAYS || 3);
 const TRUST_PROXY = process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) : false;
 const JWT_SECRET = process.env.JWT_SECRET || null;
@@ -52,6 +54,8 @@ module.exports = {
   MAX_ATTEMPTS,
   MONGO_POOL_SIZE,
   MAX_SOCKETS_PER_USER,
+  RESEND_API_KEY,
+  MAIL_FROM,
   TRUST_PROXY,
   JWT_SECRET,
   SESSION_TTL,

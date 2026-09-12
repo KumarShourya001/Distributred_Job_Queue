@@ -1,14 +1,12 @@
-/* Full-bleed dark band, the way the AWS console carries its global nav. */
 .masthead {
-  background: var(--header-bg);
-  color: var(--text-invert);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .masthead-inner {
-  max-width: 1240px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 20px 24px 22px;
+  padding: 18px 24px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -17,21 +15,39 @@
 }
 
 @media (max-width: 640px) {
-  .masthead-inner { padding: 18px 16px 20px; }
+  .masthead-inner { padding: 16px; }
+}
+
+.masthead-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.masthead .mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--text-invert);
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
 }
 
 .masthead h1 {
-  font-size: clamp(1.25rem, 2.6vw, 1.55rem);
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.2;
-  color: var(--text-invert);
 }
 
 .masthead .tagline {
-  color: #b4b4bb;
-  font-size: 13.5px;
-  margin-top: 5px;
+  color: var(--text-mute);
+  font-size: 13px;
+  margin-top: 6px;
   max-width: 66ch;
 }
 
@@ -42,41 +58,29 @@
   align-items: center;
   gap: 7px;
   padding: 4px 11px 4px 9px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: #d1d5db;
+  font-weight: 500;
+  color: var(--text-mid);
   white-space: nowrap;
   flex: 0 0 auto;
-  transition: color 200ms var(--ease-out), border-color 200ms var(--ease-out);
 }
 
 .conn .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--completed);
   flex: 0 0 auto;
 }
 
-.conn[data-state="live"] {
-  color: #6ee7a0;
-  border-color: rgba(110, 231, 160, 0.4);
-}
-
-/* The only ambient motion on the page, and it earns it: a static dot can't
-   tell "connected" apart from "frozen tab". */
 .conn[data-state="live"] .dot {
   animation: conn-pulse 2.4s ease-in-out infinite;
 }
 
-.conn[data-state="down"] {
-  color: #ff8a80;
-  border-color: rgba(255, 138, 128, 0.4);
-}
+.conn[data-state="down"] .dot { background: var(--dead); }
 
 @keyframes conn-pulse {
   0%, 100% { opacity: 1; }
@@ -88,22 +92,20 @@
 .masthead-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
-/* Deliberately quiet: signing out is not what anyone came here to do, so it
-   gets the same weight as the status pill beside it, not a filled button. */
 .signout {
   appearance: none;
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   padding: 4px 11px;
   font-family: var(--sans);
   font-size: 12px;
-  font-weight: 600;
-  color: #d1d5db;
+  font-weight: 500;
+  color: var(--text-mid);
   cursor: pointer;
   white-space: nowrap;
   transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out),
@@ -111,10 +113,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .signout:hover {
-    color: var(--text-invert);
-    border-color: rgba(255, 255, 255, 0.4);
-  }
+  .signout:hover { color: var(--text); border-color: var(--border-input); }
 }
 
 .signout:active { transform: scale(0.97); }

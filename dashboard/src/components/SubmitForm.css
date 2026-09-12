@@ -13,7 +13,7 @@
 
 .field label {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -61,17 +61,17 @@
   tab-size: 2;
 }
 
-/* ---- primary button (Cloudscape blue) --------------------------------- */
+/* ---- primary button ---- */
 
 .submit {
   appearance: none;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 6px;
   background: var(--accent);
   color: #ffffff;
   font-family: var(--sans);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 7px 20px;
   cursor: pointer;
   align-self: flex-start;

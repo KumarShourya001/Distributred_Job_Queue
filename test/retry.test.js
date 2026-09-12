@@ -67,7 +67,7 @@ test("a permanent failure lands on 'failed' after a single attempt", async () =>
 })
 
 test("an unknown job type is permanent, not retried", async () => {
-  const job = await Job.create({ type: "send_email", payload: {} })
+  const job = await Job.create({ type: "no_such_type", payload: {} })
 
   const done = await waitForTerminal(job._id)
 

@@ -14,11 +14,12 @@ export default function About() {
       <div>
         <h3>Try it</h3>
         <p>
-          Grab a free URL from{" "}
+          Pick a type: post to a URL from{" "}
           <a href="https://webhook.site" target="_blank" rel="noreferrer">
             webhook.site
           </a>
-          , paste it below, and submit. A worker will send a real HTTP request to it.
+          , email yourself, or pull the text out of any public page. A worker
+          does the work, not the API.
         </p>
       </div>
 

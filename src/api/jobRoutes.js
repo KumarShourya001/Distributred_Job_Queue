@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { handlers } = require("../worker/handlers");
-const { z } = require("zod");
+const { z, object } = require("zod");
 const {
   createJob,
   listJobs,
@@ -12,11 +12,19 @@ const {
 } = require("../services/jobService");
 const  config = require("../config/index");
 const mongoose = require("mongoose");
-
+const User = require("../models/User");
 const jobTypes = Object.keys(handlers);
 const schema = z.object({
   type: z.enum(jobTypes),
-  payload: z.record(z.any()).default({}),
+  payload: z.object({
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
+    headers: z.record(z.string(), z.string().max(1024))
+              .refine((h) => Object.keys(h).length <= 30)
+              .optional(),
+    to: z.string().email().optional(),
+    subject: z.string().min(1).max(200).optional(),
+    text: z.string().min(1).max(10000).optional(),
+  }).passthrough().default({}),
   runAt: z.coerce.date().refine((val)=>val<Date.now()+config.MAX_RUNAT_DAYS*86400000,{message:"LIMIT EXCEEDED"}).optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
   priority: z.coerce.number().int().min(-10).max(10).default(0),
@@ -61,6 +69,16 @@ router.post("/", async (req, res) => {
   const result = schema.safeParse(req.body);
   if (!result.success) {
     return res.status(400).json({ error: "invalid request body" });
+  }
+  if (result.data.type === "send_email") {
+    if (req.isMachine) {
+      return res.status(403).json({ error: "send_email requires a user session" });
+    }
+    const user = await User.findById(req.userId).lean();
+    const to = (result.data.payload.to || "").toLowerCase().trim();
+    if (!user || user.Email !== to) {
+      return res.status(400).json({ error: "you can only email your own address" });
+    }
   }
   const { job, created,full } = await createJob({ ...result.data, traceId: req.traceId,ownerId:req.userId });
   if (full) {

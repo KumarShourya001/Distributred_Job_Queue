@@ -5,12 +5,36 @@ import "./SubmitForm.css"
 // All state here is local to the form — nothing outside needs to know what's
 // typed in the textarea. The submitted job reaches the table over the
 // WebSocket, so this component never touches the shared job state.
+// One starter payload and one hint per type. Switching type replaces the
+// textarea, so the user never has to remember which keys a handler wants.
+const TEMPLATES = {
+  http_request: {
+    payload: `{
+  "url": "https://webhook.site/YOUR-UNIQUE-ID",
+  "method": "POST",
+  "body": { "hello": "from my job queue" }
+}`,
+    hint: <><code>method</code> is GET, POST, PUT, PATCH or DELETE; <code>headers</code> is optional and redacted once stored.</>,
+  },
+  send_email: {
+    payload: `{
+  "to": "you@example.com",
+  "subject": "Hello from the job queue",
+  "text": "Sent by a worker, not by the API."
+}`,
+    hint: <>You can only send to the address you signed up with — the API rejects any other <code>to</code>.</>,
+  },
+  fetch_content: {
+    payload: `{
+  "url": "https://example.com"
+}`,
+    hint: <>Downloads the page, strips tags and scripts, and stores the first 10 KB of text as the result.</>,
+  },
+}
+
 export default function SubmitForm({ onSessionLost }) {
   const [type, setType] = useState(JOB_TYPES[0])
-  const [payloadText, setPayloadText] = useState(`{
-  "url": "https://webhook.site/YOUR-UNIQUE-ID",
-  "body": { "hello": "from my job queue" }
-}`)
+  const [payloadText, setPayloadText] = useState(TEMPLATES[JOB_TYPES[0]].payload)
   const [error, setError] = useState(null)
   const [ok, setOk] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -65,7 +89,16 @@ export default function SubmitForm({ onSessionLost }) {
       <form className="form" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="job-type">Type</label>
-          <select id="job-type" value={type} onChange={(e) => setType(e.target.value)}>
+          <select
+            id="job-type"
+            value={type}
+            onChange={(e) => {
+              setType(e.target.value)
+              setPayloadText(TEMPLATES[e.target.value].payload)
+              setError(null)
+              setOk(false)
+            }}
+          >
             {JOB_TYPES.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
@@ -82,9 +115,7 @@ export default function SubmitForm({ onSessionLost }) {
             rows={7}
             spellCheck={false}
           />
-          <span className="hint">
-            <code>url</code> is where the worker sends the request, <code>body</code> is what it sends.
-          </span>
+          <span className="hint">{TEMPLATES[type].hint}</span>
         </div>
 
         <button className="submit" type="submit" disabled={submitting}>

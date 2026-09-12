@@ -4,8 +4,21 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "dashboard"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "dashboard"
+      ],
       "port": 5173
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "start"
+      ],
+      "port": 3000
     }
   ]
 }
