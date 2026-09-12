@@ -1516,3 +1516,68 @@ The general defence is not care. It is **arranging for each thing to be observab
 moment you can still act on it** - a test that asserts a job arrives, not that a socket
 opened; a token with a two-second life so a seven-day timer runs now; a pattern checked
 against `/` and not merely compiled.
+
+## 29. A worker in another country claimed my local job
+
+**Context**
+`fetch_content` written and unit-tested against a local server. Started the local API and a
+local worker, submitted a job from the dashboard. Within a second:
+
+```
+status: failed   attempts: 1
+result: { error: "no handler for type: fetch_content" }
+```
+
+The local worker had the handler - `Object.keys(handlers)` printed it. The log showed
+`worker up` and nothing else. It never saw the job.
+
+**What happened**
+Dev and prod share one Atlas database. The three worker containers on the Azure VM were
+polling the same `jobs` collection every second, running the previous commit, which had no
+`fetch_content`. One of them won the claim, looked up the handler, found nothing, and
+dead-lettered the job as a `PermanentError`. Correct behaviour on its part - an unknown type
+*should* fail permanently - which is exactly why nothing looked broken.
+
+Went away on deploy. Reproduced the other direction a minute later: the prod workers ran the
+new code and my next local job completed before the local worker's next poll.
+
+**Concept**
+The atomic claim is the whole point of the design, and it does not know about environments.
+Any worker that can reach the collection is a legitimate claimer. A shared database is a
+shared queue, and "my worker" is not a thing the system recognises.
+
+Practical rule until the databases are split: **deploy a new job type before submitting one
+anywhere.** The safer fix is a separate database per environment; the `MONGO_URI_TEST` split
+already exists for tests, and dev needs the same.
+
+## 30. `test.after` inside `test.before` runs before the first test
+
+**Context**
+`fetchContent.test.js` starts one local HTTP server for all seven tests. First draft put the
+teardown inside the setup, to keep them together:
+
+```js
+test.before(async () => {
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  test.after(() => srv.close())
+})
+```
+
+Every test: `TypeError: fetch failed ... connect ECONNREFUSED 127.0.0.1:57584`.
+
+**What happened**
+An `after` hook registered while a `before` hook is executing attaches to that hook's
+context, not to the file. It fires the moment `before` finishes - before any test runs.
+Checked with a flag:
+
+```
+after (registered inside before) ran
+first sees closed = true
+second sees closed = true
+```
+
+Moving `test.after(() => srv.close())` to the top level fixed it.
+
+**Concept**
+Hooks in `node:test` are scoped to *where they are called from*, not where they are written.
+Register setup and teardown at the same level, side by side, and never one inside the other.
