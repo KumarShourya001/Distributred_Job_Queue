@@ -8,7 +8,7 @@ export const WS_URL =
   `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`
 // Mirrors the keys of the worker's handler registry. The API builds its Zod
 // enum from that same registry, so a type missing here is one the API rejects.
-export const JOB_TYPES = ["http_request"]
+export const JOB_TYPES = ["http_request", "send_email", "fetch_content"]
 
 // Semantic colours for job state, kept separate from the interactive accent
 // so "blue" never reads as a status.

@@ -28,7 +28,7 @@
 
 .table-wrap thead th {
   text-align: left;
-  font-weight: 700;
+  font-weight: 500;
   font-size: 12px;
   color: var(--text-mid);
   padding: 9px 16px;
@@ -91,7 +91,7 @@ td.result.err { color: var(--dead); }
 td.result .none { color: var(--text-mute); font-family: var(--sans); }
 
 /* ---- status indicator -------------------------------------------------
-   AWS shows status as a coloured marker plus a word, never colour alone. */
+   Status is a coloured marker plus a word, never colour alone. */
 
 .pill {
   display: inline-flex;
@@ -125,7 +125,7 @@ td.result .none { color: var(--text-mute); font-family: var(--sans); }
 .empty strong {
   display: block;
   color: var(--text);
-  font-weight: 700;
+  font-weight: 600;
   margin-bottom: 4px;
   font-size: 15px;
 }
@@ -181,7 +181,7 @@ tr[data-open] td { background: var(--accent-bg); }
 .detail h4 {
   margin: 0 0 5px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-mute);
@@ -216,7 +216,7 @@ tr[data-open] td { background: var(--accent-bg); }
 
 .detail .facts dt {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-mute);

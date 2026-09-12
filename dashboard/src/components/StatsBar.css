@@ -1,15 +1,18 @@
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
 }
 
-@media (max-width: 640px) {
-  .stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+@media (max-width: 800px) {
+  .stats { grid-template-columns: repeat(3, 1fr); }
 }
 
-/* Each counter is a filter toggle, so it's a real <button> — keyboard
-   focusable and announced with its pressed state, not a clickable div. */
+@media (max-width: 480px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Each counter is a filter toggle, so it's a real <button>. */
 .stat {
   appearance: none;
   font: inherit;
@@ -19,59 +22,53 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px 16px 14px 19px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  position: relative;
-  overflow: hidden;
+  gap: 4px;
   transition: border-color 140ms var(--ease-out),
               box-shadow 140ms var(--ease-out),
               transform 140ms var(--ease-out);
 }
 
-/* Severity stripe: state is readable at a glance, not only by reading
-   the number and its label. */
-.stat::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: var(--stat-color, var(--text-mute));
-}
-
 @media (hover: hover) and (pointer: fine) {
-  .stat:hover { border-color: var(--text-mute); }
+  .stat:hover { border-color: var(--border-input); }
 }
 
 .stat:active { transform: scale(0.985); }
 
-/* Active filter: the card reads as pressed, and not by colour alone — the
-   border thickens and the label gains a caret. */
 .stat[data-active] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  background: var(--accent-bg);
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
 }
 
 .stat[data-active] .label::after {
   content: " ✕";
-  color: var(--accent);
-  font-weight: 700;
+  color: var(--text);
 }
 
 .stat .label {
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-mute);
 }
 
+.stat .label::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--stat-color, var(--text-mute));
+}
+
 .stat .value {
-  font-size: 1.9rem;
-  font-weight: 700;
+  font-size: 1.75rem;
+  font-weight: 600;
   line-height: 1.1;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  color: var(--stat-color, var(--text));
+  color: var(--text);
 }

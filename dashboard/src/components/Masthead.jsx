@@ -5,7 +5,10 @@ export default function Masthead({ connected, onLogout }) {
     <header className="masthead">
       <div className="masthead-inner">
         <div>
-          <h1>Distributed Job Queue</h1>
+          <div className="masthead-brand">
+            <span className="mark" aria-hidden="true">JQ</span>
+            <h1>Distributed Job Queue</h1>
+          </div>
           <p className="tagline">
             Submit a job and watch it move through the system in real time —
             claimed by a worker, executed, retried on failure, and dead-lettered

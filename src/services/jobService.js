@@ -1,6 +1,7 @@
 const Job = require("../models/Job.js");
 const config = require("../config")
 const mongoose = require("mongoose")
+const { redactJob } = require("../redact")
 
 async function jobStats(scope = {}) {
   const statuses = Job.schema.path("status").enumValues;
@@ -89,7 +90,7 @@ async function listJobs(filter = {}, n = 50, cursor = null) {
   const rows = await Job.find(query).sort({ _id: -1 }).limit(n + 1).lean();
 
   const hasMore = rows.length > n;
-  const jobs = hasMore ? rows.slice(0, n) : rows;
+  const jobs = (hasMore ? rows.slice(0, n) : rows).map(redactJob);
 
   return {
     jobs,
@@ -99,7 +100,7 @@ async function listJobs(filter = {}, n = 50, cursor = null) {
 
 
 async function getJob(id, scope = {}) {
-  return await Job.findOne({ ...scope, _id: id }).lean();
+  return redactJob(await Job.findOne({ ...scope, _id: id }).lean());
 }
 
 module.exports = { createJob, listJobs, getJob, jobStats, retryJob, cancelJob };

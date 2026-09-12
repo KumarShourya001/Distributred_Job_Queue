@@ -28,25 +28,25 @@
   gap: 10px;
 }
 
-/* The squid-ink chip carries the masthead's colour down to a screen that has
+/* The mark carries the masthead down to a screen that has
    no masthead, so the two pages read as one product. */
 .auth-brand .mark {
   width: 30px;
   height: 30px;
   border-radius: 6px;
-  background: var(--header-bg);
+  background: var(--text);
   color: var(--text-invert);
   display: grid;
   place-items: center;
   font-family: var(--mono);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
 }
 
 .auth-brand .name {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -144,7 +144,7 @@
   padding: 4px 6px;
   font-family: var(--sans);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
   cursor: pointer;
 }
@@ -180,12 +180,12 @@
   appearance: none;
   width: 100%;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 6px;
   background: var(--accent);
   color: var(--text-invert);
   font-family: var(--sans);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 9px 20px;
   cursor: pointer;
   transition: transform 160ms var(--ease-out), background 160ms var(--ease-out);
@@ -221,7 +221,7 @@
   padding: 0;
   font-family: var(--sans);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
   cursor: pointer;
   border-radius: 2px;
@@ -252,7 +252,7 @@
 
 .auth-field label {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text);
 }
 

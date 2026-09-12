@@ -1,47 +1,38 @@
-/* Palette taken from AWS's own Cloudscape design system
-   (@cloudscape-design/design-tokens), light mode. */
+/* Monochrome palette after Vercel's Geist: near-black on white, a grey ramp for
+   hierarchy, colour reserved for job status. */
 
 :root {
-  /* ---- ground & surfaces ---------------------------------------------- */
-  --bg:          #f6f6f9;  /* colorBackgroundCellShaded — the console's page grey */
-  --surface:     #ffffff;  /* colorBackgroundContainerContent */
-  --surface-2:   #f6f6f9;
-  --header-bg:   #232f3e;  /* AWS Squid Ink — the console's global nav band */
-  --border:      #c6c6cd;  /* colorBorderDividerDefault */
-  --border-soft: #ebebf0;  /* colorBorderDividerSecondary */
-  /* Interactive controls get a darker border than dividers do: WCAG 1.4.11
-     requires 3:1 for UI component boundaries. #c6c6cd is only 1.70:1 on white;
-     this is 3.34:1. AWS separates these two tokens for the same reason. */
-  --border-input: #8c8c94;  /* colorBorderInputDefault */
+  --bg:          #fafafa;
+  --surface:     #ffffff;
+  --surface-2:   #fafafa;
+  --border:      #eaeaea;
+  --border-soft: #f2f2f2;
+  --border-input:#d4d4d4;
 
-  /* ---- text ------------------------------------------------------------ */
-  --text:        #0f141a;  /* colorTextHeadingDefault */
-  --text-mid:    #424650;  /* colorTextBodySecondary */
-  --text-mute:   #656871;  /* colorTextStatusInactive */
+  --text:        #171717;
+  --text-mid:    #525252;
+  --text-mute:   #737373;
   --text-invert: #ffffff;
 
-  /* ---- interactive ------------------------------------------------------ */
-  --accent:      #006ce0;  /* colorBackgroundButtonPrimaryDefault */
-  --accent-hi:   #002b66;  /* colorBackgroundButtonPrimaryHover */
-  --accent-bg:   #f0fbff;  /* colorBackgroundItemSelected */
+  --accent:      #171717;
+  --accent-hi:   #404040;
+  --accent-bg:   #f5f5f5;
 
-  /* ---- semantic: job status, mapped to AWS status conventions ---------- */
-  --pending:     #656871;  /* inactive  */
-  --pending-bg:  #f6f6f9;
-  --claimed:     #006ce0;  /* in-progress */
-  --claimed-bg:  #f0fbff;
-  --completed:   #00802f;  /* success */
-  --completed-bg:#effff1;
-  --failed:      #855900;  /* warning */
-  --failed-bg:   #fffef0;
-  --dead:        #db0000;  /* error */
-  --dead-bg:     #fff5f5;
+  --pending:     #737373;
+  --pending-bg:  #fafafa;
+  --claimed:     #171717;
+  --claimed-bg:  #f5f5f5;
+  --completed:   #1a7f37;
+  --completed-bg:#f0fdf4;
+  --failed:      #9a6700;
+  --failed-bg:   #fffbeb;
+  --dead:        #cf222e;
+  --dead-bg:     #fef2f2;
 
-  /* ---- motion ---------------------------------------------------------- */
   --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
 
-  --sans: "Open Sans", "Helvetica Neue", Roboto, Arial, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   color-scheme: light;
 }
@@ -65,26 +56,29 @@ body {
 
 h1, h2, h3 {
   margin: 0;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
+  letter-spacing: -0.01em;
   text-wrap: balance;
 }
 
 p { margin: 0; }
 
 a {
-  color: var(--accent);
-  text-decoration: none;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--border-input);
 }
-a:hover { text-decoration: underline; }
+a:hover { text-decoration-color: currentColor; }
 a:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
 :where(button, input, select, textarea):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 

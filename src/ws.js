@@ -2,6 +2,7 @@ const { WebSocketServer } = require("ws")
 const config=require('./config')
 const log = require("./loggers")
 const { readSessionPayload } = require("./middleware/requireSession")
+const { redactJob } = require("./redact")
 
 let wss = null
 
@@ -43,7 +44,7 @@ function initWebSocket(server) {
 
 function broadcast(event) {
     if (!wss) return
-    const payload = JSON.stringify(event)
+    const payload = JSON.stringify(event.job ? { ...event, job: redactJob(event.job) } : event)
     const owner = event.job && event.job.ownerId ? String(event.job.ownerId) : null
 
     wss.clients.forEach((client) => {

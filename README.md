@@ -97,6 +97,7 @@ URL, an unknown job type. `dead` means *we tried three times and gave up*. Only 
 | Path | What it does |
 |---|---|
 | `src/config/index.js` | Loads `.env`, validates, fails fast on missing `MONGO_URI` / `JWT_SECRET` / `API_KEY` |
+| `src/redact.js` | Masks secret-looking header values on every read path |
 | `src/models/Job.js` | Job schema plus five indexes — the claim, the filtered list, per-owner idempotency, per-owner listing, and the TTL |
 | `src/models/User.js` | Email, name, dob, bcrypt hash (`select: false`) |
 | `src/server.js` | Mongo, Express, WebSocket, change stream, static dashboard, graceful shutdown |
@@ -107,13 +108,13 @@ URL, an unknown job type. `dead` means *we tried three times and gave up*. Only 
 | `src/middleware/` | `requireAuth`, `requireSession`, API-key check, token-bucket rate limit, trace ids |
 | `src/services/jobService.js` | Every write and scoped read of the jobs collection |
 | `src/worker/worker.js` | Claim → execute → complete / retry / dead-letter, with heartbeat and fencing |
-| `src/worker/handlers.js` | The handler registry — what a job `type` maps to |
+| `src/worker/handlers.js` | The handler registry — `http_request`, `send_email`, `fetch_content`, `sleep`, `fail` |
 | `src/worker/safeUrl.js` | SSRF guard |
 | `src/worker/sweeper.js` | Reclaims stranded jobs |
 | `src/changeStream.js` | Watches the collection, resumes with a stored token |
 | `src/ws.js` | WebSocket server, origin check, session auth, per-owner broadcast |
 | `dashboard/` | Vite + React UI — login, signup, submit form, live table |
-| `test/` | 124 tests across 13 files |
+| `test/` | 131 tests across 14 files |
 | `scripts/purge.js` | Dry-run-by-default bulk delete |
 | `DEBUG.md` | Debug journal — every non-obvious failure hit during the build and what it taught |
 
@@ -159,7 +160,7 @@ cd dashboard && npm install && npm run dev    # dashboard on :5173
 npm test
 ```
 
-124 tests. They spawn real server and worker processes against `MONGO_URI_TEST` and assert on
+131 tests. They spawn real server and worker processes against `MONGO_URI_TEST` and assert on
 effects — a job written, read back, and compared — rather than on return values. Nearly every
 bug this project hit was a silent no-op, so a test that only checks "it didn't throw" would
 have missed all of them.
@@ -209,9 +210,15 @@ A session sees only its own jobs; the API key is an operator credential and sees
 
 | `type` | Payload | What it does |
 |---|---|---|
-| `http_request` | `{ url, body }` | POSTs JSON to a public URL. SSRF-guarded, redirects refused, 10s timeout |
-| `sleep` | `{ ms }` | Waits, capped at 120s |
+| `http_request` | `{ url, method?, headers?, body? }` | Sends a JSON request to a public URL. `GET`/`POST`/`PUT`/`PATCH`/`DELETE`, up to 30 custom headers. SSRF-guarded, redirects refused, 10s timeout |
+| `send_email` | `{ to, subject, text }` | Sends a plain-text email through Resend. Session-only, and `to` must be the caller's own registered address — the queue is not an open relay |
+| `fetch_content` | `{ url }` | Downloads a page, strips tags and scripts, stores the first 10 KB of text. Body read is cut off at 1 MB; only `text/html` and `text/plain` are accepted |
+| `sleep` | `{ ms }` | Waits, capped at 30s |
 | `fail` | `{ message? }` | Always throws — for exercising retries |
+
+Header values whose name matches `authorization`, `cookie`, `key`, `token`, `secret` or
+`password` are stored as given but returned as `[redacted]` from every read path — the
+list, the detail, and the WebSocket stream.
 
 ```bash
 curl -X POST https://queue.kumarshourya.me/jobs \
@@ -267,9 +274,6 @@ out. Hashed bundles are cached for a year; API responses are `no-store`.
 
 ## Known limitations
 
-- **`http_request` is POST-only with no custom headers**, so authenticated APIs are out of
-  reach. Adding `method` and `headers` also means redacting them from logs and from
-  `GET /jobs/:id` — headers carry secrets.
 - **Atlas free tier caps throughput** at ~100 ops/sec and 500 connections. That, not the
   worker count, is the ceiling — past about four workers you buy throttling, not throughput.
 - **No revocation on logout.** The JWT stays valid until it expires; clearing the cookie is
