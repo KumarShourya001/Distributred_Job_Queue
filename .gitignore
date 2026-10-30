@@ -39,9 +39,9 @@ pnpm-debug.log*
 .eslintcache
 
 # ---- editors / OS ----
-# Machine-specific Claude Code settings. Pinned here rather than relying on a
-# global ignore file, so the rule travels with the repo.
-.claude/settings.local.json
+# Claude Code's local config (preview launch settings, permissions). Tooling for
+# this machine, not part of the project.
+.claude/
 .vscode/*
 !.vscode/extensions.json
 .idea/
